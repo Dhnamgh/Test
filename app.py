@@ -814,9 +814,7 @@ def _view_responses():
 
 def teacher_panel():
     """UI chính của tab Giảng viên."""
-    render_banner()
-    st.header("Bảng điều khiển Giảng viên")
-
+    
     # Nút đăng xuất GV nếu đã đăng nhập
     if st.session_state.get("is_teacher", False):
         if st.button("🚪 Đăng xuất GV", type="secondary"):
