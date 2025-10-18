@@ -351,9 +351,9 @@ def teacher_login():
         return True
 
     with st.form("teacher_login"):
-    u = st.text_input("Tài khoản", value="", placeholder="teacher")
-    p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
-    ok = st.form_submit_button("Đăng nhập")
+        u = st.text_input("Tài khoản", value="", placeholder="teacher")
+        p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
+        ok = st.form_submit_button("Đăng nhập")
 
 if ok:
     if u.strip() == TEACHER_USER and p == TEACHER_PASS:
