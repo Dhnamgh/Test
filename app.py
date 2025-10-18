@@ -18,7 +18,6 @@ st.set_page_config(page_title="Trắc nghiệm Likert 36", layout="wide")
 # =========================
 # SECRETS HELPERS
 # =========================
-st.write("🔑 Secrets keys loaded:", list(st.secrets.keys()))
 
 def sget(key, default=None):
     """Get secret by priority: top-level → [app] → default."""
@@ -38,8 +37,8 @@ def srequire(key):
 # App config
 QUIZ_ID        = sget("QUIZ_ID", "PSY36")
 TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", 20))
-TEACHER_USER   = sget("TEACHER_USER", "teacher")
-TEACHER_PASS   = sget("TEACHER_PASS", "teacher123")
+TEACHER_USER = str(sget("TEACHER_USER", "teacher")).strip()
+TEACHER_PASS = str(sget("TEACHER_PASS", "teacher123")).strip()
 
 # Google Sheets config
 QUESTIONS_SPREADSHEET_ID = srequire("QUESTIONS_SPREADSHEET_ID")
@@ -352,16 +351,18 @@ def teacher_login():
         return True
 
     with st.form("teacher_login"):
-        u = st.text_input("Tài khoản", value="", placeholder="teacher")
-        p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
-        ok = st.form_submit_button("Đăng nhập")
-    if ok:
-        if u == TEACHER_USER and p == TEACHER_PASS:
-            st.session_state["is_teacher"] = True
-            st.success("Đăng nhập thành công.")
-            st.rerun()
-        else:
-            st.error("Sai tài khoản hoặc mật khẩu.")
+    u = st.text_input("Tài khoản", value="", placeholder="teacher")
+    p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
+    ok = st.form_submit_button("Đăng nhập")
+
+if ok:
+    if u.strip() == TEACHER_USER and p == TEACHER_PASS:
+        st.session_state["is_teacher"] = True
+        st.success("Đăng nhập thành công.")
+        st.rerun()
+    else:
+        st.error("Sai tài khoản hoặc mật khẩu.")
+
     return st.session_state.get("is_teacher", False)
 
 def teacher_panel():
