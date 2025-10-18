@@ -47,63 +47,10 @@ QUESTIONS_SHEET_NAME     = sget("QUESTIONS_SHEET_NAME", "Question")
 RESPONSES_SPREADSHEET_ID = srequire("RESPONSES_SPREADSHEET_ID")
 RESPONSES_SHEET_NAME     = sget("RESPONSES_SHEET_NAME", "D25Atest")
 
-# =========================
-# GOOGLE SHEETS HELPERS
-# =========================
-def get_gspread_client():
-    # Thêm cả Drive scope (một số org cần)
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    sa = st.secrets.get("gcp_service_account")
-    if not sa or "client_email" not in sa or "private_key" not in sa:
-        st.error("❌ Thiếu hoặc sai khối [gcp_service_account] trong Secrets.")
-        st.stop()
-    credentials = Credentials.from_service_account_info(sa, scopes=scopes)
-    return gspread.authorize(credentials)
-
-def diagnose_gsheet_access(spreadsheet_id: str, sheet_name: str):
-    sa_email = st.secrets["gcp_service_account"].get("client_email", "(unknown)")
-    st.error("Không truy cập được Google Sheet (PermissionError/APIError).")
-    st.info(
-        "🔧 Cách sửa:\n"
-        f"1) Mở file Google Sheet có ID: `{spreadsheet_id}`\n"
-        f"2) Bấm **Share** → thêm email service account: **{sa_email}** → quyền **Editor**\n"
-        f"3) Kiểm tra tên worksheet đúng: **{sheet_name}**\n"
-        "4) Save → quay lại app bấm Rerun/Restart."
-    )
-
-@st.cache_data(ttl=300)
-def load_questions_df():
-    """Đọc ngân hàng câu hỏi 36 likert."""
-    gc = get_gspread_client()
-    try:
-        sh = gc.open_by_key(QUESTIONS_SPREADSHEET_ID)
-    except Exception:
-        diagnose_gsheet_access(QUESTIONS_SPREADSHEET_ID, QUESTIONS_SHEET_NAME)
-        st.stop()
-
-    try:
-        ws = sh.worksheet(QUESTIONS_SHEET_NAME)
-    except gspread.WorksheetNotFound:
-        st.error(f"Không thấy worksheet tên **{QUESTIONS_SHEET_NAME}** trong file câu hỏi.")
-        st.stop()
-
-    df = pd.DataFrame(ws.get_all_records())
-    if df.empty:
-        st.warning("Worksheet câu hỏi trống.")
-    return df
-
-def ensure_responses_header(ws):
-    """Đảm bảo worksheet Responses có header chuẩn."""
-    header = ws.row_values(1)
-    needed = ["TT", "MSSV", "Họ và Tên", "NTNS"] + [str(i) for i in range(1, 37)] + ["submitted_at", "quiz_id"]
-    if header != needed:
-        ws.clear()
-        ws.append_row(needed)
+# ------------------ RESPONSES HELPERS (ghi bài SV không xóa sheet) ------------------
 
 def open_responses_ws():
+    """Mở worksheet Responses (D25Atest)."""
     gc = get_gspread_client()
     try:
         sh = gc.open_by_key(RESPONSES_SPREADSHEET_ID)
@@ -113,47 +60,83 @@ def open_responses_ws():
     try:
         ws = sh.worksheet(RESPONSES_SHEET_NAME)
     except gspread.WorksheetNotFound:
-        # Tạo sheet mới nếu chưa có
         ws = sh.add_worksheet(title=RESPONSES_SHEET_NAME, rows=1000, cols=50)
     ensure_responses_header(ws)
     return ws
 
+
+def ensure_responses_header(ws):
+    """Đảm bảo worksheet Responses có header đúng nhưng KHÔNG xóa dữ liệu cũ."""
+    header = ws.row_values(1)
+    base_header = ["TT", "MSSV", "Họ và Tên", "NTNS"]
+    question_cols = [str(i) for i in range(1, 37)]
+    extra_cols = ["submitted_at", "quiz_id"]
+
+    # Nếu thiếu cột nào thì thêm vào cuối header
+    for col in base_header + question_cols + extra_cols:
+        if col not in header:
+            header.append(col)
+
+    # Ghi lại header (chỉ hàng 1)
+    ws.update("A1", [header])
+
+
 def upsert_response(mssv: str, hoten: str, dob: str, answers: dict):
-    """Ghi/ cập nhật bài làm SV theo MSSV. answers: {q_index->value(1..5)}"""
+    """
+    Ghi hoặc cập nhật bài làm SV theo MSSV mà không xóa dữ liệu cũ.
+    Ghi dữ liệu các câu hỏi (1..36), submitted_at, quiz_id.
+    """
     ws = open_responses_ws()
-
-    # Tải toàn bộ MSSV cột 2 để tìm vị trí
     values = ws.get_all_values()
-    header = values[0] if values else []
-    rows = values[1:] if len(values) > 1 else []
+    if not values:
+        st.error("Sheet Responses trống — cần có header trước.")
+        return
 
-    mssv_col_index = 1  # 0-based (cột MSSV)
+    header = values[0]
+    data = values[1:]
+
+    # Tìm vị trí cột MSSV
+    if "MSSV" not in header:
+        st.error("Không tìm thấy cột 'MSSV' trong sheet Responses.")
+        return
+    mssv_col_index = header.index("MSSV")
+
+    # Tìm dòng có MSSV khớp
     found_row = None
-    for idx, row in enumerate(rows, start=2):  # start=2 vì 1 là header
+    for idx, row in enumerate(data, start=2):
         if len(row) > mssv_col_index and row[mssv_col_index].strip() == mssv.strip():
             found_row = idx
             break
 
-    # Chuẩn bị dòng ghi
+    # Nếu không có → thêm dòng mới cuối bảng
+    target_row = found_row or len(data) + 2
+
     now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    line = []
-    # TT sẽ tự sinh (để trống), giữ chỗ bằng "" rồi Google sẽ không tự tăng—ta không dựa TT
-    line.append("")                      # TT
-    line.append(mssv)                    # MSSV
-    line.append(hoten)                   # Họ và Tên
-    line.append(dob)                     # NTNS
+
+    # Tạo dict giá trị cần ghi
+    update_dict = {
+        "Họ và Tên": hoten,
+        "NTNS": dob,
+        "submitted_at": now_iso,
+        "quiz_id": QUIZ_ID,
+    }
     for i in range(1, 37):
-        line.append(answers.get(i, ""))  # 1..36
-    line.append(now_iso)                 # submitted_at
-    line.append(QUIZ_ID)                 # quiz_id
+        update_dict[str(i)] = answers.get(i, "")
 
-    if found_row:
-        # update existing row
-        ws.update(f"A{found_row}:AJ{found_row}", [line])  # A..AJ (36 + 6 = 42 cột) adjust if needed
-    else:
-        ws.append_row(line)
+    # Ghi từng ô theo cột có tên trùng
+    for col_name, value in update_dict.items():
+        if col_name not in header:
+            continue
+        col_index = header.index(col_name) + 1  # 1-based
+        col_letter = ""
+        # chuyển số cột sang chữ (A, B, ..., AA, AB...)
+        n = col_index
+        while n > 0:
+            n, remainder = divmod(n - 1, 26)
+            col_letter = chr(65 + remainder) + col_letter
+        cell_label = f"{col_letter}{target_row}"
+        ws.update_acell(cell_label, value)
 
-# =========================
 # SHUFFLE STABLE PER STUDENT
 # =========================
 def stable_perm(n: int, key: str) -> list:
