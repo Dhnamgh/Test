@@ -12,17 +12,60 @@ from google.oauth2.service_account import Credentials
 # ------------------ App config ------------------
 st.set_page_config(page_title="Trắc nghiệm Likert 36", layout="wide")
 
-QUIZ_ID = st.secrets.get("QUIZ_ID", "PSY36")
+# 👉 Debug: liệt kê các khóa có trong Secrets để bạn đối chiếu nhanh
+st.write("🔑 Secrets keys loaded:", list(st.secrets.keys()))
+
+def required_secret(key: str) -> str:
+    """Đọc 1 secret bắt buộc, nếu thiếu thì dừng app với hướng dẫn rõ ràng."""
+    val = st.secrets.get(key)
+    if not val:
+        st.error(
+            f"❌ Thiếu khóa secrets: **{key}**.\n\n"
+            "Vào *Manage app → Settings → Secrets* và thêm đúng tên khóa.\n"
+            "Ví dụ đúng (TOML):\n"
+            "```\n"
+            "QUESTIONS_SPREADSHEET_ID = \"1P7SOG...\"\n"
+            "QUESTIONS_SHEET_NAME = \"Question\"\n"
+            "RESPONSES_SPREADSHEET_ID = \"1P7SOG...\"\n"
+            "RESPONSES_SHEET_NAME = \"D25Atest\"\n"
+            "```\n"
+        )
+        st.stop()
+    return val
+
+# Các khóa có mặc định -> dùng get
+QUIZ_ID        = st.secrets.get("QUIZ_ID", "PSY36")
 TIME_LIMIT_MIN = int(st.secrets.get("TIME_LIMIT_MIN", 20))
 
-QUESTIONS_SPREADSHEET_ID = st.secrets["QUESTIONS_SPREADSHEET_ID"]
-QUESTIONS_SHEET_NAME = st.secrets.get("QUESTIONS_SHEET_NAME", "PSY36_Questions")
+TEACHER_USER   = st.secrets.get("TEACHER_USER", "teacher")
+TEACHER_PASS   = st.secrets.get("TEACHER_PASS", "teacher123")
 
-RESPONSES_SPREADSHEET_ID = st.secrets["RESPONSES_SPREADSHEET_ID"]
-RESPONSES_SHEET_NAME = st.secrets.get("RESPONSES_SHEET_NAME", "Sheet1")
+# Các khóa BẮT BUỘC -> dùng required_secret
+QUESTIONS_SPREADSHEET_ID = required_secret("QUESTIONS_SPREADSHEET_ID")
+QUESTIONS_SHEET_NAME     = st.secrets.get("QUESTIONS_SHEET_NAME", "PSY36_Questions")
 
-TEACHER_USER = st.secrets.get("TEACHER_USER", "teacher")
-TEACHER_PASS = st.secrets.get("TEACHER_PASS", "teacher123")
+RESPONSES_SPREADSHEET_ID = required_secret("RESPONSES_SPREADSHEET_ID")
+RESPONSES_SHEET_NAME     = st.secrets.get("RESPONSES_SHEET_NAME", "Sheet1")
+
+# Service Account là 1 bảng con trong TOML -> bắt buộc có
+SA = st.secrets.get("gcp_service_account")
+if not SA or "client_email" not in SA:
+    st.error(
+        "❌ Thiếu hoặc sai khối **[gcp_service_account]** trong Secrets.\n"
+        "Hãy dán đúng định dạng TOML, ví dụ:\n"
+        "```\n"
+        "[gcp_service_account]\n"
+        "type = \"service_account\"\n"
+        "project_id = \"...\"\n"
+        "private_key_id = \"...\"\n"
+        "private_key = \"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n\"\n"
+        "client_email = \"xxx@yyy.iam.gserviceaccount.com\"\n"
+        "client_id = \"...\"\n"
+        "token_uri = \"https://oauth2.googleapis.com/token\"\n"
+        "```\n"
+    )
+    st.stop()
+
 
 # ------------------ Google Sheets helpers ------------------
 def get_gspread_client():
