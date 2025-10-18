@@ -982,17 +982,33 @@ def _mcq_stats_tab():
     dstat = pd.DataFrame(data)
     st.dataframe(dstat, use_container_width=True, height=200)
 
-    # Biểu đồ cột tương tác
-    fig = px.bar(
-        dstat,
-        x="Đáp án",
-        y="Số người",
-        color="Đáp án",
-        hover_data={"Tỷ lệ (%)": True, "Số người": True, "Đáp án": False},
-        text="Số người",
-    )
-    fig.update_traces(hovertemplate="Số người: %{y}<br>Tỷ lệ: %{customdata[0]}%")
-    fig.update_layout(yaxis_title="Số người", xaxis_title="Đáp án", showlegend=False)
+        # Biểu đồ cột tương tác (Plotly nếu có, nếu không dùng Altair)
+    if HAS_PLOTLY:
+        fig = px.bar(
+            dstat,
+            x="Đáp án",
+            y="Số người",
+            color="Đáp án",
+            hover_data={"Tỷ lệ (%)": True, "Số người": True, "Đáp án": False},
+            text="Số người",
+        )
+        fig.update_traces(hovertemplate="Số người: %{y}<br>Tỷ lệ: %{customdata[0]}%")
+        fig.update_layout(yaxis_title="Số người", xaxis_title="Đáp án", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        chart = (
+            alt.Chart(dstat)
+            .mark_bar()
+            .encode(
+                x=alt.X("Đáp án:N", title="Đáp án"),
+                y=alt.Y("Số người:Q", title="Số người"),
+                color="Đáp án:N",
+                tooltip=[alt.Tooltip("Đáp án:N"), alt.Tooltip("Số người:Q"), alt.Tooltip("Tỷ lệ (%):Q")],
+            )
+            .interactive()
+        )
+        st.altair_chart(chart, use_container_width=True)
+
     st.plotly_chart(fig, use_container_width=True)
 
 # ---------- TRỢ LÝ AI (OFFLINE) ----------
