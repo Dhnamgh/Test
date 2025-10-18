@@ -279,7 +279,7 @@ with tab_sv:
     page_student()
 
 with tab_hdsd:
-    st.markdown("""
+    st.markdown(""")
 ### Hướng dẫn CSV
 - Cột bắt buộc:
   - `quiz_id` | `qtype` (MCQ/LIKERT) | `question`
