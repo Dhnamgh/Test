@@ -817,13 +817,7 @@ def _view_responses():
 def teacher_panel():
     """UI chính của tab Giảng viên."""
     
-    # Nút đăng xuất GV nếu đã đăng nhập
-    if st.session_state.get("is_teacher", False):
-        if st.button("🚪 Đăng xuất GV", type="secondary"):
-            st.session_state["is_teacher"] = False
-            st.success("Đã đăng xuất.")
-            st.rerun()
-
+   
     if not teacher_login():
         return
 
