@@ -4,3 +4,4 @@ numpy
 gspread
 google-auth
 openpyxl
+plotly
