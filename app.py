@@ -350,10 +350,10 @@ def teacher_login():
             st.rerun()
         return True
 
-    with st.form("teacher_login"):
-        u = st.text_input("Tài khoản", value="", placeholder="teacher")
-        p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
-        ok = st.form_submit_button("Đăng nhập")
+   with st.form("teacher_login"):
+    u = st.text_input("Tài khoản", value="", placeholder="teacher")
+    p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
+    ok = st.form_submit_button("Đăng nhập")
 
 if ok:
     if u.strip() == TEACHER_USER and p == TEACHER_PASS:
@@ -363,7 +363,8 @@ if ok:
     else:
         st.error("Sai tài khoản hoặc mật khẩu.")
 
-    return st.session_state.get("is_teacher", False)
+
+return st.session_state.get("is_teacher", False)
 
 def teacher_panel():
     if not teacher_login():
