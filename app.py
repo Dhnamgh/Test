@@ -1160,7 +1160,7 @@ def _view_responses():
 
 def teacher_panel():
     render_banner()
-    st.header("Bảng điều khiển Giảng viên")
+    
     if not teacher_login():
         return
 
