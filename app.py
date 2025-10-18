@@ -1158,9 +1158,7 @@ if page == "Sinh viên":
 
 elif page == "Giảng viên":
     render_banner()
-    st.title("Khu vực Giảng viên")
-    teacher_panel()
-
+    
 else:
     render_banner()
     st.title("Hướng dẫn nhanh")
