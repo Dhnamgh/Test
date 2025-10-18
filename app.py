@@ -673,20 +673,23 @@ def upsert_mcq_response(mssv: str, hoten: str, answers: dict, total_correct: int
         ws.batch_update(updates)
 
 # =========================
-# TEACHER PANEL
+# TEACHER (GIẢNG VIÊN) — PANEL & UTILITIES
 # =========================
+
 def teacher_login() -> bool:
+    """Cổng đăng nhập/đăng xuất giảng viên. Trả về True nếu đã đăng nhập."""
     st.subheader("Đăng nhập Giảng viên")
 
+    # Đã đăng nhập → hiện trạng thái & nút đăng xuất (key riêng để tránh trùng)
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
-        # Nút đăng xuất GV (luôn hiện khi đã đăng nhập)
-        if st.button("🚪 Đăng xuất GV", type="secondary"):
+        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv"):
             st.session_state["is_teacher"] = False
             st.success("Đã đăng xuất.")
             st.rerun()
         return True
 
+    # Form đăng nhập
     with st.form("teacher_login_form"):
         u = st.text_input("Tài khoản", value="", placeholder="teacher")
         p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
@@ -701,6 +704,8 @@ def teacher_login() -> bool:
             st.error("Sai tài khoản hoặc mật khẩu.")
     return False
 
+
+# ---------- Likert: chẩn đoán & xem ----------
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question sheet")
     try:
@@ -727,19 +732,22 @@ def _view_questions():
     with st.expander("🔎 Chẩn đoán"):
         _diagnose_questions()
 
+
+# ---------- Likert: ghi đè câu hỏi ----------
 def push_questions(df: pd.DataFrame):
     """
-    Ghi ĐÈ toàn bộ worksheet câu hỏi Likert bằng dataframe cung cấp.
-    Cần cột tối thiểu: q_index, question.
+    Ghi ĐÈ toàn bộ worksheet câu hỏi Likert.
+    Yêu cầu tối thiểu: cột 'q_index', 'question'.
+    Khuyến nghị thêm: 'quiz_id', 'facet', 'left_label', 'right_label', 'reverse'.
     """
     required = {"q_index", "question"}
-    if not required.issubset(set(df.columns)):
+    if not required.issubset(df.columns):
         missing = ", ".join(sorted(required - set(df.columns)))
         st.error(f"Thiếu cột bắt buộc: {missing}")
         return
 
-    if "q_index" in df.columns:
-        df["q_index"] = pd.to_numeric(df["q_index"], errors="coerce").astype("Int64")
+    df = df.copy()
+    df["q_index"] = pd.to_numeric(df["q_index"], errors="coerce").astype("Int64")
 
     if "quiz_id" not in df.columns:
         df["quiz_id"] = QUIZ_ID
@@ -770,63 +778,154 @@ def push_questions(df: pd.DataFrame):
         if len(df) > 0:
             ws.append_rows(df.astype(object).values.tolist())
 
-        load_questions_df.clear()
+        load_questions_df.clear()  # refresh cache
         st.success(f"✅ Đã ghi {len(df)} dòng vào **{QUESTIONS_SHEET_NAME}**.")
     except Exception as e:
         st.error(f"Lỗi ghi dữ liệu lên sheet: {e}")
 
+
 def _upload_questions():
     st.markdown("#### 📥 Tải câu hỏi Likert (CSV/XLSX)")
     st.info(
-        "File nên có cột: quiz_id | q_index | facet | question | left_label | right_label | reverse. "
-        "Tối thiểu bắt buộc: q_index, question. Nếu thiếu quiz_id, hệ thống sẽ điền mặc định."
+        "File nên có cột: **quiz_id | q_index | facet | question | left_label | right_label | reverse**. "
+        "Tối thiểu bắt buộc: **q_index, question**. Nếu thiếu `quiz_id`, hệ thống sẽ điền mặc định."
     )
-    up = st.file_uploader("Chọn file câu hỏi", type=["csv", "xlsx"])
+    up = st.file_uploader("Chọn file câu hỏi Likert", type=["csv", "xlsx"], key="likert_uploader")
 
     if up is not None:
         try:
             if up.name.lower().endswith(".csv"):
                 df_new = pd.read_csv(up)
             else:
-                import openpyxl
+                import openpyxl  # đảm bảo đã có trong requirements.txt
                 df_new = pd.read_excel(up)
         except Exception as e:
             st.error(f"Không đọc được file: {e}")
             return
 
         st.write("Xem nhanh dữ liệu tải lên:")
-        st.dataframe(df_new.head(10), use_container_width=True)
-        if st.button("Ghi lên Question", type="primary"):
+        st.dataframe(df_new.head(12), use_container_width=True)
+        if st.button("Ghi lên Question", type="primary", key="write_likert"):
             push_questions(df_new)
 
     with st.expander("🔎 Chẩn đoán"):
         _diagnose_questions()
 
+
+# ---------- MCQ: ghi đè câu hỏi ----------
+def push_mcq_questions(df: pd.DataFrame):
+    """
+    Ghi ĐÈ toàn bộ worksheet câu hỏi MCQ (MCQ_Questions).
+    Yêu cầu cột: q_index, question, optionA, optionB, optionC, optionD, correct (A/B/C/D hoặc để trống).
+    """
+    required = {"q_index", "question", "optionA", "optionB", "optionC", "optionD", "correct"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        st.error(f"Thiếu cột bắt buộc cho MCQ: {missing}")
+        return
+
+    df = df.copy()
+    df["q_index"] = pd.to_numeric(df["q_index"], errors="coerce").astype("Int64")
+
+    if "quiz_id" not in df.columns:
+        df["quiz_id"] = QUIZ_ID
+    else:
+        df["quiz_id"] = df["quiz_id"].fillna(QUIZ_ID)
+
+    cols = ["quiz_id","q_index","question","optionA","optionB","optionC","optionD","correct"]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df = df[cols].sort_values(["quiz_id","q_index"], na_position="last")
+
+    gc = get_gspread_client()
+    try:
+        sh = gc.open_by_key(QUESTIONS_SPREADSHEET_ID)
+    except Exception as e:
+        st.error(f"Không mở được file câu hỏi: {e}")
+        return
+
+    try:
+        try:
+            ws = sh.worksheet(MCQ_QUESTIONS_SHEET_NAME)
+            ws.clear()
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=MCQ_QUESTIONS_SHEET_NAME, rows=2000, cols=30)
+
+        ws.append_row(list(df.columns))
+        if len(df) > 0:
+            ws.append_rows(df.astype(object).values.tolist())
+
+        load_mcq_questions_df.clear()  # refresh cache
+        st.success(f"✅ Đã ghi {len(df)} dòng vào **{MCQ_QUESTIONS_SHEET_NAME}**.")
+    except Exception as e:
+        st.error(f"Lỗi ghi dữ liệu MCQ lên sheet: {e}")
+
+
+def _upload_mcq_questions():
+    st.markdown("#### 🧩 Tải câu hỏi MCQ (CSV/XLSX)")
+    st.info(
+        "File MCQ cần cột: **quiz_id | q_index | question | optionA | optionB | optionC | optionD | correct**.  \n"
+        "- **correct**: A/B/C/D (có thể để trống nếu chưa chấm ngay).  \n"
+        "- Nếu thiếu `quiz_id`, hệ thống tự điền mặc định từ cấu hình hiện tại."
+    )
+    up = st.file_uploader("Chọn file MCQ", type=["csv", "xlsx"], key="mcq_uploader")
+
+    if up is not None:
+        try:
+            if up.name.lower().endswith(".csv"):
+                df_new = pd.read_csv(up)
+            else:
+                import openpyxl  # đảm bảo đã có trong requirements.txt
+                df_new = pd.read_excel(up)
+        except Exception as e:
+            st.error(f"Không đọc được file: {e}")
+            return
+
+        st.write("Xem nhanh dữ liệu tải lên:")
+        st.dataframe(df_new.head(12), use_container_width=True)
+        if st.button("Ghi lên MCQ_Questions", type="primary", key="write_mcq"):
+            push_mcq_questions(df_new)
+
+
+# ---------- Responses notes ----------
 def _diagnose_responses():
     st.markdown("#### ℹ️ Ghi chú Responses")
     st.info(
         "Kết quả được ghi theo từng lớp:\n"
-        "- Likert: LikertD25A, LikertD25C\n"
-        "- MCQ: MCQD25A, MCQD25C\n"
-        "Danh sách lớp gốc (whitelist): D25A, D25C."
+        "- **Likert**: `Likert<CLASS>` (ví dụ: LikertD25A, LikertD25C)\n"
+        "- **MCQ**: `MCQ<CLASS>` (ví dụ: MCQD25A, MCQD25C)\n"
+        "Danh sách lớp gốc (whitelist): `D25A`, `D25C` (cột: STT | MSSV | Họ và tên | NTNS | tổ)."
     )
 
 def _view_responses():
     _diagnose_responses()
 
+
+# ---------- Main teacher panel ----------
 def teacher_panel():
-    """UI chính của tab Giảng viên."""
-    
-   
+    """UI chính của tab Giảng viên: banner + đăng nhập + 4 tab điều khiển."""
+    render_banner()
+    st.header("Bảng điều khiển Giảng viên")
+
+    # Gate đăng nhập GV
     if not teacher_login():
         return
 
-    tab1, tab2, tab3 = st.tabs(["📋 Xem câu hỏi Likert", "📥 Tải câu hỏi Likert", "📑 Ghi chú Responses"])
+    # Tabs quản trị
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📋 Xem câu hỏi Likert",
+        "📥 Tải câu hỏi Likert",
+        "🧩 Tải câu hỏi MCQ",
+        "📑 Ghi chú Responses",
+    ])
     with tab1:
         _view_questions()
     with tab2:
         _upload_questions()
     with tab3:
+        _upload_mcq_questions()
+    with tab4:
         _view_responses()
 
 # =========================
