@@ -1159,7 +1159,7 @@ def _view_responses():
     _diagnose_responses()
 
 def teacher_panel():
-    render_banner()
+    
     
     if not teacher_login():
         return
