@@ -251,6 +251,7 @@ def init_exam_state():
     st.session_state.setdefault("sv_answers", {})      # {q_index -> 1..5}
     st.session_state.setdefault("sv_order", [])        # hoán vị câu hỏi
     st.session_state.setdefault("sv_cursor", 0)        # index đang hiển thị
+    st.session_state.setdefault("sv_allow", False)     # đã đậu whitelist chưa
 
 def start_exam(mssv, hoten, n_questions):
     init_exam_state()
@@ -274,11 +275,8 @@ def render_timer():
     rem = remaining_seconds()
     mins = rem // 60
     secs = rem % 60
+    # Chỉ hiển thị thời gian hiện tại; không tự refresh
     st.markdown(f"⏳ **Thời gian còn lại:** {mins:02d}:{secs:02d}")
-
-    # Tự động làm mới mỗi 1s (tương thích mọi version Streamlit)
-    st.markdown("<meta http-equiv='refresh' content='1'>", unsafe_allow_html=True)
-
 
 def likert36_exam():
     init_exam_state()
@@ -287,53 +285,47 @@ def likert36_exam():
     st.success(f"Đề {QUIZ_ID} — {n_questions} câu (Likert 1..5)")
 
     # ---- Đăng nhập SV / bắt đầu ----
-if not st.session_state.get("sv_started"):
-    # Nếu đã được cấp phép ở lần trước (sv_allow=True), không hiện form nữa
-    if st.session_state.get("sv_allow"):
-        # Đã duyệt trước đó nhưng có rerun, khởi tạo bài thi luôn
-        df = load_questions_df()
-        n_questions = len(df)
-        start_exam(st.session_state.get("sv_mssv",""), st.session_state.get("sv_hoten",""), n_questions)
-        st.rerun()
+    if not st.session_state.get("sv_started"):
+        # Nếu đã được cấp phép ở lần trước (sv_allow=True), không hiện form nữa
+        if st.session_state.get("sv_allow"):
+            start_exam(st.session_state.get("sv_mssv",""), st.session_state.get("sv_hoten",""), n_questions)
+            st.rerun()
 
-    with st.form("sv_login"):
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            mssv = st.text_input("MSSV", placeholder="VD: 2112345")
-        with col2:
-            hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn A")
-        agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
-        submitted = st.form_submit_button("Bắt đầu làm bài")
+        with st.form("sv_login"):
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                mssv = st.text_input("MSSV", placeholder="VD: 2112345")
+            with col2:
+                hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn A")
+            agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
+            submitted = st.form_submit_button("Bắt đầu làm bài")
 
-    if submitted:
-        if not mssv or not hoten:
-            st.error("Vui lòng nhập MSSV và Họ & Tên.")
-        elif not agree:
-            st.error("Vui lòng tích xác nhận.")
-        else:
-            # ✅ Chỉ kiểm whitelist MỘT LẦN ở đây
-            wl = load_whitelist_students()  # {mssv: hoten_trong_ds}
-            if mssv.strip() not in wl:
-                st.error("MSSV chưa có trong danh sách, không được phép làm bài.")
+        if submitted:
+            if not mssv or not hoten:
+                st.error("Vui lòng nhập MSSV và Họ & Tên.")
+            elif not agree:
+                st.error("Vui lòng tích xác nhận.")
             else:
-                name_on_sheet = wl.get(mssv.strip(), "")
-                if name_on_sheet and (name_on_sheet.strip().lower() != hoten.strip().lower()):
-                    st.warning("Họ tên không khớp danh sách, vui lòng kiểm tra lại (vẫn cho phép vào).")
+                # ✅ Chỉ kiểm whitelist MỘT LẦN ở đây
+                wl = load_whitelist_students()  # {mssv: hoten_trong_ds}
+                if mssv.strip() not in wl:
+                    st.error("MSSV chưa có trong danh sách, không được phép làm bài.")
+                else:
+                    name_on_sheet = wl.get(mssv.strip(), "")
+                    if name_on_sheet and (name_on_sheet.strip().lower() != hoten.strip().lower()):
+                        st.warning("Họ tên không khớp danh sách, vui lòng kiểm tra lại (vẫn cho phép vào).")
 
-                # Ghi state để lần rerun sau KHÔNG kiểm lại
-                st.session_state["sv_mssv"] = mssv.strip()
-                st.session_state["sv_hoten"] = hoten.strip()
-                st.session_state["sv_allow"] = True  # ✅ đã được phép làm bài
+                    # Ghi state để lần rerun sau KHÔNG kiểm lại
+                    st.session_state["sv_mssv"] = mssv.strip()
+                    st.session_state["sv_hoten"] = hoten.strip()
+                    st.session_state["sv_allow"] = True  # ✅ đã được phép làm bài
 
-                # Khởi tạo đề thi và vào làm
-                df = load_questions_df()
-                n_questions = len(df)
-                start_exam(mssv, hoten, n_questions)
-                st.rerun()
+                    # Khởi tạo đề thi và vào làm
+                    start_exam(mssv, hoten, n_questions)
+                    st.rerun()
 
-    st.info("SV chỉ tiếp cận tab **Sinh viên**. Sau khi bắt đầu sẽ có đồng hồ đếm ngược.")
-    return
-
+        st.info("SV chỉ tiếp cận tab **Sinh viên**. Sau khi bắt đầu sẽ có đồng hồ đếm ngược.")
+        return
 
     # ---- Đang làm bài ----
     render_timer()
@@ -415,7 +407,7 @@ def do_submit(df_questions: pd.DataFrame):
 
     st.success("✅ Đã nộp bài thành công!")
     # Khóa bài thi: reset trạng thái
-    for k in ["sv_started", "sv_start_time", "sv_answers", "sv_order", "sv_cursor"]:
+    for k in ["sv_started", "sv_start_time", "sv_answers", "sv_order", "sv_cursor", "sv_allow"]:
         st.session_state.pop(k, None)
 
 # =========================
@@ -525,7 +517,7 @@ def push_questions(df: pd.DataFrame):
             ws.append_rows(df.astype(object).values.tolist())
 
         load_questions_df.clear()
-        st.success(f"✅ Đã ghi {len(df)} dòng vào **{QUESTIONS_SHEET_NAME}**.")
+        st.success(f"✅ Đã ghi {len[df]} dòng vào **{QUESTIONS_SHEET_NAME}**.")
     except Exception as e:
         st.error(f"Lỗi ghi dữ liệu lên sheet: {e}")
 
