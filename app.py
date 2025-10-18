@@ -1157,7 +1157,6 @@ if page == "Sinh viên":
         mcq_exam()
 
 elif page == "Giảng viên":
-    render_banner()
     teacher_panel()
 else:
     render_banner()
@@ -1172,9 +1171,6 @@ else:
         "  - `Likert<CLASS>`, `MCQ<CLASS>`: kết quả theo lớp.\n"
         "- Nếu lỗi quyền, hãy **Share** file cho service account trong secrets, quyền **Editor**."
     )
-
-st.markdown("---")
-st.markdown("© abcd")
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
