@@ -275,7 +275,10 @@ def render_timer():
     mins = rem // 60
     secs = rem % 60
     st.markdown(f"⏳ **Thời gian còn lại:** {mins:02d}:{secs:02d}")
-    st.autorefresh(interval=1000, key="timer_refresh")
+
+    # Tự động làm mới mỗi 1s (tương thích mọi version Streamlit)
+    st.markdown("<meta http-equiv='refresh' content='1'>", unsafe_allow_html=True)
+
 
 def likert36_exam():
     init_exam_state()
