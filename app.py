@@ -339,67 +339,121 @@ def do_submit(df_questions: pd.DataFrame):
         st.session_state.pop(k, None)
 
 # =========================
-# TEACHER PANEL
+# TEACHER PANEL (FULL)
 # =========================
-def teacher_login():
+
+# Lấy user/pass từ secrets và loại khoảng trắng vô tình
+TEACHER_USER = str(sget("TEACHER_USER", "teacher")).strip()
+TEACHER_PASS = str(sget("TEACHER_PASS", "teacher123")).strip()
+
+def teacher_login() -> bool:
+    """Đăng nhập giảng viên đơn giản bằng secrets."""
     st.subheader("Đăng nhập Giảng viên")
-    if st.session_state.get("is_teacher"):
+
+    # Đã login trong session
+    if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
-        if st.button("Đăng xuất"):
-            st.session_state["is_teacher"] = False
-            st.rerun()
+        colA, colB = st.columns([1, 1])
+        with colA:
+            if st.button("Đăng xuất", use_container_width=True):
+                st.session_state["is_teacher"] = False
+                st.rerun()
         return True
 
-   with st.form("teacher_login"):
-    u = st.text_input("Tài khoản", value="", placeholder="teacher")
-    p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
-    ok = st.form_submit_button("Đăng nhập")
+    # Form đăng nhập
+    with st.form("teacher_login_form", clear_on_submit=False):
+        u = st.text_input("Tài khoản", value="", placeholder="teacher")
+        p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
+        ok = st.form_submit_button("Đăng nhập")
 
-if ok:
-    if u.strip() == TEACHER_USER and p == TEACHER_PASS:
-        st.session_state["is_teacher"] = True
-        st.success("Đăng nhập thành công.")
-        st.rerun()
+    if ok:
+        if u.strip() == TEACHER_USER and p == TEACHER_PASS:
+            st.session_state["is_teacher"] = True
+            st.success("Đăng nhập thành công.")
+            st.rerun()
+        else:
+            st.error("Sai tài khoản hoặc mật khẩu.")
+    return False
+
+
+def _diagnose_questions():
+    """Chẩn đoán nhanh kết nối Question sheet."""
+    st.markdown("#### 🔎 Kiểm tra Question sheet")
+    try:
+        gc = get_gspread_client()
+        sh = gc.open_by_key(QUESTIONS_SPREADSHEET_ID)
+        ws_titles = [w.title for w in sh.worksheets()]
+        st.success("✅ Mở được file câu hỏi.")
+        st.write("Worksheets:", ws_titles)
+        if QUESTIONS_SHEET_NAME in ws_titles:
+            st.info(f"Worksheet hiện hành: **{QUESTIONS_SHEET_NAME}** ✓")
+        else:
+            st.error(f"❌ Không thấy worksheet: **{QUESTIONS_SHEET_NAME}**")
+    except Exception as e:
+        st.error(f"Không mở được file câu hỏi: {e}")
+
+
+def _diagnose_responses():
+    """Chẩn đoán nhanh kết nối Responses sheet."""
+    st.markdown("#### 🔎 Kiểm tra Responses sheet")
+    try:
+        ws = open_responses_ws()
+        st.success(f"✅ Mở được worksheet: **{RESPONSES_SHEET_NAME}** (file ID {RESPONSES_SPREADSHEET_ID})")
+        st.write("Số dòng hiện có (kể cả header):", ws.row_count)
+    except Exception as e:
+        st.error(f"Không mở được Responses: {e}")
+
+
+def _view_questions():
+    st.markdown("#### 📋 Ngân hàng câu hỏi hiện tại")
+    dfq = load_questions_df()
+    if dfq.empty:
+        st.warning("Worksheet **Question** đang trống.")
     else:
-        st.error("Sai tài khoản hoặc mật khẩu.")
+        st.dataframe(dfq, use_container_width=True, height=420)
+        st.caption(f"Tổng số câu: **{len(dfq)}**")
 
+    with st.expander("🔎 Chẩn đoán"):
+        _diagnose_questions()
 
-return st.session_state.get("is_teacher", False)
-
-def teacher_panel():
-    if not teacher_login():
-        return
-
-    st.header("Bảng điều khiển GV")
-    tab1, tab2 = st.tabs(["📋 Xem câu hỏi", "📥 Tải câu hỏi (CSV/XLSX)"])
-    with tab1:
-        dfq = load_questions_df()
-        st.dataframe(dfq, use_container_width=True)
-        st.caption(f"Tổng số câu: {len(dfq)}")
-    with tab2:
-        st.info("Upload file CSV hoặc XLSX có cột: quiz_id | q_index | question | left_label | right_label | reverse")
-        up = st.file_uploader("Chọn file câu hỏi", type=["csv", "xlsx"])
-        if up is not None:
-            try:
-                if up.name.lower().endswith(".csv"):
-                    newdf = pd.read_csv(up)
-                else:
-                    newdf = pd.read_excel(up)
-                if "q_index" not in newdf.columns:
-                    st.error("Thiếu cột q_index.")
-                else:
-                    push_questions(newdf)
-            except Exception as e:
-                st.error(f"Lỗi đọc file: {e}")
 
 def push_questions(df: pd.DataFrame):
-    """Ghi đè worksheet câu hỏi bằng dataframe cung cấp (GV)."""
+    """
+    Ghi ĐÈ toàn bộ worksheet câu hỏi bằng dataframe cung cấp.
+    Cần cột tối thiểu: q_index, question.
+    Khuyến nghị cột đầy đủ: quiz_id | q_index | facet | question | left_label | right_label | reverse
+    """
+    # Kiểm tra cột
+    required = {"q_index", "question"}
+    if not required.issubset(set(df.columns)):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        st.error(f"Thiếu cột bắt buộc: {missing}")
+        return
+
+    # Ép kiểu cơ bản
+    if "q_index" in df.columns:
+        df["q_index"] = pd.to_numeric(df["q_index"], errors="coerce").astype("Int64")
+
+    # Mặc định quiz_id nếu thiếu
+    if "quiz_id" not in df.columns:
+        df["quiz_id"] = QUIZ_ID
+    else:
+        df["quiz_id"] = df["quiz_id"].fillna(QUIZ_ID)
+
+    # Trật tự cột gợi ý
+    columns_order = ["quiz_id", "q_index", "facet", "question", "left_label", "right_label", "reverse"]
+    for c in columns_order:
+        if c not in df.columns:
+            df[c] = ""
+    df = df[columns_order].sort_values(["quiz_id", "q_index"], na_position="last")
+
+    # Ghi lên Google Sheets
     gc = get_gspread_client()
     try:
         sh = gc.open_by_key(QUESTIONS_SPREADSHEET_ID)
-    except Exception:
-        diagnose_gsheet_access(QUESTIONS_SPREADSHEET_ID, QUESTIONS_SHEET_NAME)
-        st.stop()
+    except Exception as e:
+        st.error(f"Không mở được file câu hỏi: {e}")
+        return
 
     try:
         try:
@@ -407,16 +461,88 @@ def push_questions(df: pd.DataFrame):
             ws.clear()
         except gspread.WorksheetNotFound:
             ws = sh.add_worksheet(title=QUESTIONS_SHEET_NAME, rows=2000, cols=20)
-        # Viết header + rows
-        header = list(df.columns)
-        ws.append_row(header)
+
+        # Viết header + dữ liệu
+        ws.append_row(list(df.columns))
         if len(df) > 0:
             ws.append_rows(df.astype(object).values.tolist())
-        st.success(f"✅ Đã ghi {len(df)} dòng câu hỏi vào '{QUESTIONS_SHEET_NAME}'.")
-        # Xoá cache để SV thấy dữ liệu mới
+
+        # Làm mới cache câu hỏi
         load_questions_df.clear()
+        st.success(f"✅ Đã ghi {len(df)} dòng vào **{QUESTIONS_SHEET_NAME}**.")
     except Exception as e:
-        st.error(f"Lỗi ghi QuestionBank: {e}")
+        st.error(f"Lỗi ghi dữ liệu lên sheet: {e}")
+
+
+def _upload_questions():
+    st.markdown("#### 📥 Tải câu hỏi (CSV/XLSX)")
+    st.info(
+        "File nên có cột: **quiz_id | q_index | facet | question | left_label | right_label | reverse**.\n"
+        "Tối thiểu bắt buộc: **q_index, question**. Nếu thiếu `quiz_id`, hệ thống sẽ điền mặc định."
+    )
+    up = st.file_uploader("Chọn file câu hỏi", type=["csv", "xlsx"])
+
+    if up is not None:
+        try:
+            if up.name.lower().endswith(".csv"):
+                df_new = pd.read_csv(up)
+            else:
+                df_new = pd.read_excel(up)
+        except Exception as e:
+            st.error(f"Không đọc được file: {e}")
+            return
+
+        st.write("Xem nhanh dữ liệu tải lên:")
+        st.dataframe(df_new.head(10), use_container_width=True)
+        if st.button("Ghi lên Question", type="primary"):
+            push_questions(df_new)
+
+    with st.expander("🔎 Chẩn đoán"):
+        _diagnose_questions()
+
+
+def _view_responses():
+    st.markdown("#### 📑 Xem bài làm (Responses)")
+    try:
+        ws = open_responses_ws()
+        # Lấy ~1000 dòng để xem nhanh
+        rows = ws.get_all_values()
+        if not rows:
+            st.info("Sheet trống.")
+            return
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+        st.dataframe(df, use_container_width=True, height=420)
+        st.caption(f"Số bài ghi nhận: **{len(df)}** (không tính header)")
+    except Exception as e:
+        st.error(f"Lỗi đọc Responses: {e}")
+
+    with st.expander("🔎 Chẩn đoán"):
+        _diagnose_responses()
+
+
+def teacher_panel():
+    """UI chính của tab Giảng viên."""
+    if not teacher_login():
+        return
+
+    st.header("Bảng điều khiển Giảng viên")
+
+    # Tabs chức năng
+    tab1, tab2, tab3 = st.tabs([
+        "📋 Xem câu hỏi",
+        "📥 Tải câu hỏi",
+        "📑 Xem bài làm"
+    ])
+
+    with tab1:
+        _view_questions()
+
+    with tab2:
+        _upload_questions()
+
+    with tab3:
+        _view_responses()
+
 
 # =========================
 # SIDEBAR NAVIGATION
