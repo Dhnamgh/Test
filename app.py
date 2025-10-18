@@ -287,33 +287,53 @@ def likert36_exam():
     st.success(f"Đề {QUIZ_ID} — {n_questions} câu (Likert 1..5)")
 
     # ---- Đăng nhập SV / bắt đầu ----
-    if not st.session_state.get("sv_started"):
-        with st.form("sv_login"):
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                mssv = st.text_input("MSSV", placeholder="VD: 2112345")
-            with col2:
-                hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn A")
-            agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
-            submitted = st.form_submit_button("Bắt đầu làm bài")
-        if submitted:
-            if not mssv or not hoten:
-                st.error("Vui lòng nhập MSSV và Họ & Tên.")
-            elif not agree:
-                st.error("Vui lòng tích xác nhận.")
+if not st.session_state.get("sv_started"):
+    # Nếu đã được cấp phép ở lần trước (sv_allow=True), không hiện form nữa
+    if st.session_state.get("sv_allow"):
+        # Đã duyệt trước đó nhưng có rerun, khởi tạo bài thi luôn
+        df = load_questions_df()
+        n_questions = len(df)
+        start_exam(st.session_state.get("sv_mssv",""), st.session_state.get("sv_hoten",""), n_questions)
+        st.rerun()
+
+    with st.form("sv_login"):
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            mssv = st.text_input("MSSV", placeholder="VD: 2112345")
+        with col2:
+            hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn A")
+        agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
+        submitted = st.form_submit_button("Bắt đầu làm bài")
+
+    if submitted:
+        if not mssv or not hoten:
+            st.error("Vui lòng nhập MSSV và Họ & Tên.")
+        elif not agree:
+            st.error("Vui lòng tích xác nhận.")
+        else:
+            # ✅ Chỉ kiểm whitelist MỘT LẦN ở đây
+            wl = load_whitelist_students()  # {mssv: hoten_trong_ds}
+            if mssv.strip() not in wl:
+                st.error("MSSV chưa có trong danh sách, không được phép làm bài.")
             else:
-                # ✅ Kiểm tra whitelist từ sheet D25Atest
-                wl = load_whitelist_students()  # {mssv: hoten_trong_ds}
-                if mssv.strip() not in wl:
-                    st.error("MSSV chưa có trong danh sách, không được phép làm bài.")
-                else:
-                    name_on_sheet = wl.get(mssv.strip(), "")
-                    if name_on_sheet and (name_on_sheet.strip().lower() != hoten.strip().lower()):
-                        st.warning("Họ tên không khớp danh sách, vui lòng kiểm tra lại (vẫn cho phép vào).")
-                    start_exam(mssv, hoten, n_questions)
-                    st.rerun()
-        st.info("SV chỉ tiếp cận tab **Sinh viên**. Sau khi bắt đầu sẽ có đồng hồ đếm ngược.")
-        return
+                name_on_sheet = wl.get(mssv.strip(), "")
+                if name_on_sheet and (name_on_sheet.strip().lower() != hoten.strip().lower()):
+                    st.warning("Họ tên không khớp danh sách, vui lòng kiểm tra lại (vẫn cho phép vào).")
+
+                # Ghi state để lần rerun sau KHÔNG kiểm lại
+                st.session_state["sv_mssv"] = mssv.strip()
+                st.session_state["sv_hoten"] = hoten.strip()
+                st.session_state["sv_allow"] = True  # ✅ đã được phép làm bài
+
+                # Khởi tạo đề thi và vào làm
+                df = load_questions_df()
+                n_questions = len(df)
+                start_exam(mssv, hoten, n_questions)
+                st.rerun()
+
+    st.info("SV chỉ tiếp cận tab **Sinh viên**. Sau khi bắt đầu sẽ có đồng hồ đếm ngược.")
+    return
+
 
     # ---- Đang làm bài ----
     render_timer()
