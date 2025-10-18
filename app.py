@@ -18,7 +18,7 @@ def render_banner():
     st.markdown(
         (
             "<div style='padding:10px 16px;border-radius:10px;"
-            "background:#0f172a;color:#fff;font-weight:600;"
+            "background:#0f172a;color:#1e90ff;font-weight:600;"
             "display:flex;align-items:center;gap:10px'>"
             "Hệ thống trắc nghiệm trực tuyến"
             "</div>"
