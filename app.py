@@ -1,14 +1,30 @@
+# app.py
+
+# =========================
+# IMPORTS & PAGE CONFIG
+# =========================
 import re, time, hashlib
+from datetime import datetime
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
 
-# ============================================================
+# Chart backend: ưu tiên Plotly, fallback Altair
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except Exception:
+    HAS_PLOTLY = False
+    import altair as alt
+
+st.set_page_config(page_title="Hệ thống trắc nghiệm trực tuyến", layout="wide")
+
+# =========================
 # SECRETS HELPERS
-# ============================================================
+# =========================
 def sget(key, default=None):
     if key in st.secrets:
         return st.secrets[key]
@@ -23,17 +39,16 @@ def srequire(key):
         st.stop()
     return val
 
-# ============================================================
-# 🎓 CẤU HÌNH — CHỈ MỘT KHỐI NÀY THÔI
-# ============================================================
-
-# 👨‍🏫 Tài khoản GV: bắt buộc có trong Secrets (không có mặc định)
+# =========================
+# CẤU HÌNH
+# =========================
+# 👨‍🏫 Tài khoản GV: bắt buộc có trong Secrets
 TEACHER_USER = srequire("TEACHER_USER")
 TEACHER_PASS = srequire("TEACHER_PASS")
 
 # ⏱️ Thời gian làm bài (phút)
-TIME_LIMIT_MIN      = int(sget("TIME_LIMIT_MIN", 20))       # Likert
-MCQ_TIME_LIMIT_MIN  = int(sget("MCQ_TIME_LIMIT_MIN", 20))   # MCQ
+TIME_LIMIT_MIN     = int(sget("TIME_LIMIT_MIN", 20))      # Likert
+MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", 20))  # MCQ
 
 # 📋 Mã đề
 QUIZ_ID = sget("QUIZ_ID", "PSY36")
@@ -43,8 +58,24 @@ QUESTIONS_SPREADSHEET_ID = srequire("QUESTIONS_SPREADSHEET_ID")
 RESPONSES_SPREADSHEET_ID = srequire("RESPONSES_SPREADSHEET_ID")
 
 # Tên worksheet (có thể để mặc định)
-QUESTIONS_SHEET_NAME      = sget("QUESTIONS_SHEET_NAME", "Question")
-MCQ_QUESTIONS_SHEET_NAME  = sget("MCQ_QUESTIONS_SHEET_NAME", "MCQ_Questions")
+QUESTIONS_SHEET_NAME     = sget("QUESTIONS_SHEET_NAME", "Question")
+MCQ_QUESTIONS_SHEET_NAME = sget("MCQ_QUESTIONS_SHEET_NAME", "MCQ_Questions")
+
+# =========================
+# BANNER
+# =========================
+def render_banner():
+    st.markdown(
+        (
+            "<div style='padding:10px 16px;border-radius:10px;"
+            "background:#1e90ff;color:#ffffff;font-weight:600;"
+            "display:flex;align-items:center;gap:10px;"
+            "box-shadow:0 2px 5px rgba(0,0,0,0.2);'>"
+            "Hệ thống trắc nghiệm trực tuyến"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 # =========================
 # GOOGLE SHEETS HELPERS
@@ -88,7 +119,7 @@ def load_questions_df():
 
     df = pd.DataFrame(ws.get_all_records())
     if df.empty:
-        st.warning("Worksheet câu hỏi trống.")
+        st.warning("Worksheet câu hỏi Likert trống.")
         return df
 
     if "q_index" not in df.columns:
@@ -106,7 +137,7 @@ def load_mcq_questions_df():
         sh = gc.open_by_key(QUESTIONS_SPREADSHEET_ID)
         ws = sh.worksheet(MCQ_QUESTIONS_SHEET_NAME)
     except Exception:
-        st.error(f"Không truy cập được MCQ_Questions (sheet '{MCQ_QUESTIONS_SHEET_NAME}').")
+        st.error(f"Không truy cập được worksheet MCQ_Questions: '{MCQ_QUESTIONS_SHEET_NAME}'.")
         st.stop()
 
     df = pd.DataFrame(ws.get_all_records())
@@ -130,9 +161,7 @@ def _col_idx_to_letter(idx_1based: int) -> str:
         s = chr(65 + r) + s
     return s
 
-# Batch-get helpers để giảm quota
 def _row1(ws):
-    """Đọc đúng 1 hàng header nhanh."""
     rng = ws.batch_get(['1:1'])
     return rng[0][0] if (rng and rng[0]) else []
 
@@ -140,11 +169,6 @@ def _col_range_letter(idx_1based: int) -> str:
     return _col_idx_to_letter(idx_1based)
 
 def attempt_exists_fast(ws, mssv: str) -> bool:
-    """
-    Kiểm tra đã tồn tại bài làm bằng cách xem cột MSSV.
-    Nhẹ hơn rất nhiều so với get_all_values().
-    Có backoff nhẹ khi gặp lỗi 429 hiếm gặp.
-    """
     header = None
     for _ in range(2):
         try:
@@ -173,12 +197,13 @@ def attempt_exists_fast(ws, mssv: str) -> bool:
     return any((str(v).strip() == target) for v in col_vals)
 
 # =========================
-# LỌC TÊN LỚP GỐC (tự do chữ+số, không chứa test/question/likert/mcq)
+# LỌC TÊN LỚP (roster gốc)
 # =========================
 FORBIDDEN_TOKENS = ("test", "question", "likert", "mcq")
-_CLASS_ALLOWED = re.compile(r"^[A-Za-z0-9]{2,20}$")  # 2–20 ký tự, chỉ chữ/số
+_CLASS_ALLOWED = re.compile(r"^[A-Za-z0-9]{2,20}$")  # tên lớp 2–20 ký tự chữ/số
 
 def is_roster_sheet_name(title: str) -> bool:
+    """Tên lớp: chỉ chữ/số, có ≥1 chữ & ≥1 số, không chứa test/question/likert/mcq."""
     if not isinstance(title, str):
         return False
     t = title.strip()
@@ -187,22 +212,15 @@ def is_roster_sheet_name(title: str) -> bool:
     tl = t.lower()
     if any(tok in tl for tok in FORBIDDEN_TOKENS):
         return False
-    # bắt buộc có ít nhất 1 chữ và 1 số
     if not re.search(r"[A-Za-z]", t) or not re.search(r"\d", t):
         return False
     return True
 
-# =========================
-# CLASS / ROSTER HELPERS
-# =========================
 def get_class_rosters():
-    # Ưu tiên cấu hình tường minh trong Secrets
     s = sget("CLASS_ROSTERS", "")
     if s:
         raw = [x.strip() for x in re.split(r"[,\s]+", s) if x.strip()]
         return [x for x in raw if is_roster_sheet_name(x)]
-
-    # Không có secrets → quét trong RESPONSES
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(RESPONSES_SPREADSHEET_ID)
@@ -211,6 +229,8 @@ def get_class_rosters():
         return sorted(candidates)
     except Exception:
         return []
+
+CLASS_ROSTERS = get_class_rosters()
 
 def open_roster_ws(class_code: str):
     class_code = class_code.strip()
@@ -308,7 +328,6 @@ def open_mcq_response_ws_for_class(class_code: str, n_questions: int):
     return ws
 
 def attempt_exists(ws, header, mssv: str) -> bool:
-    # Hàm đầy đủ (ít dùng trong flow mới)
     try:
         col_mssv = header.index("MSSV")
     except ValueError:
@@ -348,7 +367,7 @@ def _option_perm_for_student(mssv: str, qidx: int):
     return perm.tolist()
 
 # =========================
-# STUDENT STATE
+# STUDENT STATE & LOGIN
 # =========================
 def init_exam_state():
     st.session_state.setdefault("sv_mssv", "")
@@ -379,7 +398,8 @@ def student_gate() -> bool:
     with st.form("sv_login_unified"):
         col0, col1, col2 = st.columns([1,1,2])
         with col0:
-            class_code = st.selectbox("Lớp", options=get_class_rosters() or ["Chưa có lớp"], index=0)
+            options = get_class_rosters()
+            class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
         with col1:
             mssv = st.text_input("MSSV", placeholder="VD: 2112345")
         with col2:
@@ -388,6 +408,9 @@ def student_gate() -> bool:
         submitted = st.form_submit_button("Đăng nhập")
 
     if submitted:
+        if not class_code:
+            st.error("Chưa có danh sách lớp. Hãy tạo lớp trong tab Giảng viên.")
+            return False
         if not mssv or not hoten:
             st.error("Vui lòng nhập MSSV và Họ & Tên.")
             return False
@@ -425,8 +448,7 @@ def remaining_seconds_likert():
     if not st.session_state.get("likert_started"):
         return TIME_LIMIT_MIN * 60
     spent = time.time() - (st.session_state.get("likert_start_time") or time.time())
-    remain = max(0, int(TIME_LIMIT_MIN * 60 - spent))
-    return remain
+    return max(0, int(TIME_LIMIT_MIN * 60 - spent))
 
 def render_timer_likert():
     rem = remaining_seconds_likert()
@@ -445,7 +467,6 @@ def likert36_exam():
     class_code = st.session_state.get("sv_class", "")
     mssv = st.session_state.get("sv_mssv","")
 
-    # Trước khi Start — chỉ check 1 lần, dùng fast check để tiết kiệm quota
     if not st.session_state.get("likert_started") and not st.session_state.get("likert_precheck_done"):
         ws = open_likert_response_ws_for_class(class_code)
         if attempt_exists_fast(ws, mssv):
@@ -453,7 +474,6 @@ def likert36_exam():
             return
         st.session_state["likert_precheck_done"] = True
 
-    # Chưa bấm Start → không lộ đề
     if not st.session_state.get("likert_started"):
         with st.container():
             st.markdown("**Mô tả Likert 36:** Mỗi câu chọn mức 1..5. Có đếm ngược thời gian.")
@@ -463,7 +483,6 @@ def likert36_exam():
                 st.rerun()
         return
 
-    # ĐÃ Start → hiển thị đề + timer (KHÔNG gọi API trong quá trình làm)
     render_timer_likert()
     if remaining_seconds_likert() <= 0:
         st.warning("⏱️ Hết thời gian — hệ thống sẽ nộp bài với các câu đã chọn.")
@@ -574,7 +593,7 @@ def do_submit_likert(df_questions: pd.DataFrame):
         st.session_state.pop(k, None)
 
 # =========================
-# MCQ EXAM (có Start & Timer; hạn chế API)
+# MCQ EXAM
 # =========================
 def start_mcq_exam():
     st.session_state["mcq_started"] = True
@@ -610,7 +629,6 @@ def mcq_exam():
 
     st.success(f"Đề MCQ {QUIZ_ID} — {n} câu (4 đáp án).")
 
-    # Trước khi Start — chỉ check 1 lần & không gọi lại trong quá trình làm
     if not st.session_state.get("mcq_started") and not st.session_state.get("mcq_precheck_done"):
         try:
             ws = open_mcq_response_ws_for_class(class_code, n)
@@ -622,7 +640,6 @@ def mcq_exam():
             st.error(f"Lỗi truy cập sheet MCQ: {e}")
             return
 
-    # Chưa ấn Start → mô tả + Start (KHÔNG đọc sheet nữa)
     if not st.session_state.get("mcq_started"):
         with st.container():
             st.markdown("**Mô tả MCQ:** Mỗi câu chọn A/B/C/D. Có đếm ngược thời gian.")
@@ -632,7 +649,6 @@ def mcq_exam():
                 st.rerun()
         return
 
-    # Đang làm bài → KHÔNG gọi sheet: chỉ render timer + câu hỏi
     render_timer_mcq()
     if remaining_seconds_mcq() <= 0:
         st.warning("⏱️ Hết thời gian — hệ thống sẽ nộp bài với các câu đã chọn.")
@@ -766,7 +782,7 @@ def teacher_login() -> bool:
         return True
 
     with st.form("teacher_login_form"):
-        u = st.text_input("Tài khoản", value=TEACHER_USER, placeholder="teacher")
+        u = st.text_input("Tài khoản", value="", placeholder="teacher")
         p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
         ok = st.form_submit_button("Đăng nhập")
 
@@ -955,7 +971,6 @@ def _create_new_class_tab():
         if not is_roster_sheet_name(class_name):
             st.error("Tên lớp không hợp lệ. Yêu cầu: chỉ chữ/số (không khoảng trắng), có ít nhất 1 chữ và 1 số, và không chứa test/question/likert/mcq.")
             return
-        # Đọc file (nếu có) hoặc tạo rỗng với header mẫu
         if up is not None:
             try:
                 if up.name.lower().endswith(".csv"):
@@ -969,14 +984,12 @@ def _create_new_class_tab():
         else:
             df = pd.DataFrame(columns=["STT", "MSSV", "Họ và Tên", "NTNS", "Tổ"])
 
-        # Chuẩn header
         wanted = ["STT", "MSSV", "Họ và Tên", "NTNS", "Tổ"]
         for w in wanted:
             if w not in df.columns:
                 df[w] = ""
         df = df[wanted]
 
-        # Ghi worksheet lớp
         try:
             gc = get_gspread_client()
             sh = gc.open_by_key(RESPONSES_SPREADSHEET_ID)
@@ -989,7 +1002,6 @@ def _create_new_class_tab():
             if len(df) > 0:
                 ws.append_rows(df.astype(object).values.tolist())
 
-            # Cập nhật cache class rosters
             load_whitelist_students_by_class.clear()
             st.success(f"✅ Đã tạo/ghi roster lớp **{class_name}**.")
         except Exception as e:
@@ -997,7 +1009,6 @@ def _create_new_class_tab():
 
 # ---------- THỐNG KÊ MCQ ----------
 def _read_mcq_sheet(class_code: str) -> pd.DataFrame:
-    """Đọc MCQ<class> → DataFrame."""
     gc = get_gspread_client()
     sh = gc.open_by_key(RESPONSES_SPREADSHEET_ID)
     wsname = f"MCQ{class_code}"
@@ -1012,28 +1023,21 @@ def _read_mcq_sheet(class_code: str) -> pd.DataFrame:
 def _mcq_stats_tab():
     st.markdown("#### 📊 Thống kê MCQ theo câu hỏi")
     classes = get_class_rosters()
-    class_code = st.selectbox("Chọn lớp", options=classes or ["(Chưa có lớp)"])
-    if not classes:
-        st.info("Chưa có roster lớp hợp lệ.")
-        return
-
+    class_code = st.selectbox("Chọn lớp", options=classes)
     df = _read_mcq_sheet(class_code)
     if df.empty:
         st.info("Chưa có dữ liệu MCQ cho lớp này.")
         return
 
-    # Xác định số câu từ header (cột số)
     qcols = [c for c in df.columns if str(c).isdigit()]
     if not qcols:
         st.info("Không tìm thấy cột câu hỏi (1..N).")
         return
 
-    # Chọn câu
     qnums = sorted([int(c) for c in qcols])
     q_choice = st.selectbox("Chọn câu", options=qnums, index=0)
     col = str(q_choice)
 
-    # Thống kê A/B/C/D
     counts = df[col].astype(str).str.strip().str.upper().value_counts()
     all_labels = ["A","B","C","D"]
     data = []
@@ -1046,7 +1050,6 @@ def _mcq_stats_tab():
     dstat = pd.DataFrame(data)
     st.dataframe(dstat, use_container_width=True, height=200)
 
-    # Biểu đồ cột tương tác — Plotly nếu có, nếu không dùng Altair
     if HAS_PLOTLY:
         fig = px.bar(
             dstat,
@@ -1077,17 +1080,12 @@ def _mcq_stats_tab():
 def _ai_assistant_tab():
     st.markdown("#### 🤖 Trợ lý AI (từ khóa ngắn)")
     classes = get_class_rosters()
-    class_code = st.selectbox("Chọn lớp", options=classes or ["(Chưa có lớp)"], key="ai_class")
-    if not classes:
-        st.info("Chưa có roster lớp hợp lệ.")
-        return
-
+    class_code = st.selectbox("Chọn lớp", options=classes, key="ai_class")
     df = _read_mcq_sheet(class_code)
     if df.empty:
         st.info("Chưa có dữ liệu MCQ cho lớp này.")
         return
 
-    # Yêu cầu tối thiểu: cần có cột 'score' và 'submitted_at'
     if "score" not in df.columns:
         st.warning("Sheet MCQ chưa có cột 'score'.")
     if "submitted_at" not in df.columns:
@@ -1108,7 +1106,6 @@ def _ai_answer_from_df(df: pd.DataFrame, query: str) -> str:
         return "Không có dữ liệu."
     q = (query or "").strip().lower()
 
-    # Chuẩn hóa các cột cần thiết
     dfc = df.copy()
     if "score" in dfc.columns:
         dfc["score_num"] = pd.to_numeric(dfc["score"], errors="coerce")
@@ -1120,7 +1117,6 @@ def _ai_answer_from_df(df: pd.DataFrame, query: str) -> str:
     else:
         dfc["ts"] = pd.NaT
 
-    # Nhận dạng theo từ khóa ngắn
     if any(k in q for k in ["sớm", "som", "sớm nhất"]):
         dfv = dfc.dropna(subset=["ts"]).sort_values("ts")
         if len(dfv):
@@ -1159,16 +1155,15 @@ def _diagnose_responses():
     st.markdown("#### ℹ️ Ghi chú Responses")
     st.info(
         "Kết quả được ghi theo từng lớp:\n"
-        "- Likert: Likert<CLASS> (VD: LikertD25A, LikertD25C)\n"
-        "- MCQ: MCQ<CLASS> (VD: MCQD25A, MCQD25C)\n"
-        "Danh sách lớp gốc (whitelist): tên chỉ chữ+số, có ít nhất 1 chữ và 1 số."
+        "- Likert: Likert<CLASS> (VD: LikertD25A, LikertCNTT2025)\n"
+        "- MCQ: MCQ<CLASS> (VD: MCQD25A, MCQCNTT2025)\n"
     )
 
 def _view_responses():
     _diagnose_responses()
 
 def teacher_panel():
-    
+    # Không in tiêu đề lớn để tránh trùng
     if not teacher_login():
         return
 
@@ -1216,7 +1211,7 @@ if page == "Sinh viên":
     if not student_gate():
         st.stop()
 
-    # Chọn test
+    # Chọn test sau khi đăng nhập
     mode = st.radio("Chọn loại trắc nghiệm:", ["Likert 36", "MCQ 4 đáp án"], horizontal=True)
     if mode == "Likert 36":
         likert36_exam()
@@ -1234,7 +1229,6 @@ else:
         "- **Sinh viên:** đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert 36** hoặc **MCQ 4 đáp án** → bấm **Bắt đầu** để hiển thị đề & **bắt giờ đếm ngược** → **Nộp bài**.\n\n"
         "- **Giảng viên:** xem/tải ngân hàng Likert & MCQ; tạo lớp mới; xem **thống kê MCQ** (biểu đồ cột tương tác); dùng **Trợ lý AI** để hỏi nhanh về sớm/muộn, cao/ thấp điểm."
     )
-
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
