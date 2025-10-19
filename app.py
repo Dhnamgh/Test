@@ -3,9 +3,10 @@
 # 🎓 CẤU HÌNH CƠ BẢN - DỄ TÙY CHỈNH
 # ============================================================
 
-# 👨‍🏫 Tài khoản đăng nhập giảng viên (có thể thay trực tiếp ở đây)
-TEACHER_USER_DEFAULT = "lecturer"
-TEACHER_PASS_DEFAULT = "ump@217hb"
+# 👨‍🏫 Tài khoản đăng nhập giảng viên (có thể thay trong Scret)
+# BẮT BUỘC có trong Secrets, nếu thiếu sẽ báo lỗi và stop()
+TEACHER_USER = srequire("TEACHER_USER")
+TEACHER_PASS = srequire("TEACHER_PASS")
 
 # ⏱️ Thời gian làm bài (phút)
 TIME_LIMIT_MIN_DEFAULT = 20          # cho Likert
