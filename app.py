@@ -21,6 +21,19 @@ except Exception:
     import altair as alt
 
 st.set_page_config(page_title="Hệ thống trắc nghiệm trực tuyến", layout="wide")
+st.markdown(
+    """
+    <style>
+    /* Ẩn nút Manage app ở góc phải Streamlit Cloud */
+    [data-testid="stStatusWidget"] {display: none !important;}
+    /* Ẩn thanh footer mặc định của Streamlit */
+    footer {visibility: hidden;}
+    /* Ẩn menu "View app" nếu xuất hiện */
+    [data-testid="stActionButton"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # =========================
 # SECRETS HELPERS
