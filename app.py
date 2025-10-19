@@ -784,8 +784,24 @@ def upsert_mcq_response(mssv: str, hoten: str, answers: dict, total_correct: int
 # =========================
 # TEACHER (GV) PANEL
 # =========================
+def _get_teacher_creds():
+    # Đọc từ secrets mỗi lần (hỗ trợ root và [app])
+    def _sget(key):
+        if key in st.secrets:
+            return st.secrets[key]
+        if "app" in st.secrets and key in st.secrets["app"]:
+            return st.secrets["app"][key]
+        return None
+    u = _sget("TEACHER_USER")
+    p = _sget("TEACHER_PASS")
+    if not u or not p:
+        st.error("❌ Chưa cấu hình TEACHER_USER / TEACHER_PASS trong Secrets.")
+        st.stop()
+    return str(u).strip(), str(p).strip()
+
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
+
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
         if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv"):
@@ -795,18 +811,20 @@ def teacher_login() -> bool:
         return True
 
     with st.form("teacher_login_form"):
-        u = st.text_input("Tài khoản", value="", placeholder="teacher")
-        p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
+        u_in = st.text_input("Tài khoản", value="", placeholder="teacher")
+        p_in = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
         ok = st.form_submit_button("Đăng nhập")
 
     if ok:
-        if u.strip() == TEACHER_USER and p.strip() == TEACHER_PASS:
+        u_sec, p_sec = _get_teacher_creds()
+        if u_in.strip() == u_sec and p_in.strip() == p_sec:
             st.session_state["is_teacher"] = True
             st.success("Đăng nhập thành công.")
             st.rerun()
         else:
             st.error("Sai tài khoản hoặc mật khẩu.")
     return False
+
 
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question sheet")
