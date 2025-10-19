@@ -1,4 +1,23 @@
 # app.py
+# ============================================================
+# 🎓 CẤU HÌNH CƠ BẢN - DỄ TÙY CHỈNH
+# ============================================================
+
+# 👨‍🏫 Tài khoản đăng nhập giảng viên (có thể thay trực tiếp ở đây)
+TEACHER_USER_DEFAULT = "lecturer"
+TEACHER_PASS_DEFAULT = "ump@217hb"
+
+# ⏱️ Thời gian làm bài (phút)
+TIME_LIMIT_MIN_DEFAULT = 20          # cho Likert
+MCQ_TIME_LIMIT_MIN_DEFAULT = 20      # cho MCQ
+
+# 📋 Mã đề trắc nghiệm (tùy bạn đặt)
+QUIZ_ID_DEFAULT = "PSY36"
+
+# ============================================================
+# Phần dưới tự động đọc secrets (nếu có) và fallback về default ở trên
+# ============================================================
+
 import re
 import time
 from datetime import datetime
@@ -30,7 +49,7 @@ def render_banner():
             "background:#1e90ff;color:#ffffff;font-weight:600;"
             "display:flex;align-items:center;gap:10px;"
             "box-shadow:0 2px 5px rgba(0,0,0,0.2);'>"
-            "🧪 Hệ thống trắc nghiệm trực tuyến"
+            "Hệ thống trắc nghiệm trực tuyến"
             "</div>"
         ),
         unsafe_allow_html=True,
@@ -53,11 +72,12 @@ def srequire(key):
         st.stop()
     return val
 
-QUIZ_ID        = sget("QUIZ_ID", "PSY36")
-TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", 20))                     # Likert
-MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", TIME_LIMIT_MIN)) # MCQ (mặc định theo Likert)
-TEACHER_USER   = str(sget("TEACHER_USER", "teacher")).strip()
-TEACHER_PASS   = str(sget("TEACHER_PASS", "teacher123")).strip()
+# Lấy cấu hình thực tế (ưu tiên secrets, fallback default ở đầu file)
+QUIZ_ID        = sget("QUIZ_ID", QUIZ_ID_DEFAULT)
+TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", TIME_LIMIT_MIN_DEFAULT))
+MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", MCQ_TIME_LIMIT_MIN_DEFAULT))
+TEACHER_USER   = str(sget("TEACHER_USER", TEACHER_USER_DEFAULT)).strip()
+TEACHER_PASS   = str(sget("TEACHER_PASS", TEACHER_PASS_DEFAULT)).strip()
 
 QUESTIONS_SPREADSHEET_ID = srequire("QUESTIONS_SPREADSHEET_ID")
 QUESTIONS_SHEET_NAME     = sget("QUESTIONS_SHEET_NAME", "Question")
@@ -192,24 +212,44 @@ def attempt_exists_fast(ws, mssv: str) -> bool:
     return any((str(v).strip() == target) for v in col_vals)
 
 # =========================
+# LỌC TÊN LỚP GỐC (tự do chữ+số, không chứa test/question/likert/mcq)
+# =========================
+FORBIDDEN_TOKENS = ("test", "question", "likert", "mcq")
+_CLASS_ALLOWED = re.compile(r"^[A-Za-z0-9]{2,20}$")  # 2–20 ký tự, chỉ chữ/số
+
+def is_roster_sheet_name(title: str) -> bool:
+    if not isinstance(title, str):
+        return False
+    t = title.strip()
+    if not _CLASS_ALLOWED.match(t):
+        return False
+    tl = t.lower()
+    if any(tok in tl for tok in FORBIDDEN_TOKENS):
+        return False
+    # bắt buộc có ít nhất 1 chữ và 1 số
+    if not re.search(r"[A-Za-z]", t) or not re.search(r"\d", t):
+        return False
+    return True
+
+# =========================
 # CLASS / ROSTER HELPERS
 # =========================
 def get_class_rosters():
-    # Ưu tiên lấy từ secrets: "D25A,D25B,D25C"
+    # Ưu tiên cấu hình tường minh trong Secrets
     s = sget("CLASS_ROSTERS", "")
     if s:
-        return [x.strip() for x in re.split(r"[,\s]+", s) if x.strip()]
-    # Nếu không có, quét từ file RESPONSES: các sheet tên kiểu D25A, D25C...
+        raw = [x.strip() for x in re.split(r"[,\s]+", s) if x.strip()]
+        return [x for x in raw if is_roster_sheet_name(x)]
+
+    # Không có secrets → quét trong RESPONSES
     try:
         gc = get_gspread_client()
         sh = gc.open_by_key(RESPONSES_SPREADSHEET_ID)
         titles = [w.title for w in sh.worksheets()]
-        cands = [t for t in titles if re.match(r"^D\d+[A-Za-z]+$", t)]
-        return cands or ["D25A", "D25C"]
+        candidates = [t for t in titles if is_roster_sheet_name(t)]
+        return sorted(candidates)
     except Exception:
-        return ["D25A", "D25C"]
-
-CLASS_ROSTERS = get_class_rosters()
+        return []
 
 def open_roster_ws(class_code: str):
     class_code = class_code.strip()
@@ -307,7 +347,7 @@ def open_mcq_response_ws_for_class(class_code: str, n_questions: int):
     return ws
 
 def attempt_exists(ws, header, mssv: str) -> bool:
-    # Giữ hàm cũ cho nơi khác nếu cần (nhưng MCQ/Likert exam đã dùng fast check)
+    # Hàm đầy đủ (ít dùng trong flow mới)
     try:
         col_mssv = header.index("MSSV")
     except ValueError:
@@ -378,7 +418,7 @@ def student_gate() -> bool:
     with st.form("sv_login_unified"):
         col0, col1, col2 = st.columns([1,1,2])
         with col0:
-            class_code = st.selectbox("Lớp", options=get_class_rosters(), index=0)
+            class_code = st.selectbox("Lớp", options=get_class_rosters() or ["Chưa có lớp"], index=0)
         with col1:
             mssv = st.text_input("MSSV", placeholder="VD: 2112345")
         with col2:
@@ -765,7 +805,7 @@ def teacher_login() -> bool:
         return True
 
     with st.form("teacher_login_form"):
-        u = st.text_input("Tài khoản", value="", placeholder="teacher")
+        u = st.text_input("Tài khoản", value=TEACHER_USER, placeholder="teacher")
         p = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
         ok = st.form_submit_button("Đăng nhập")
 
@@ -951,8 +991,8 @@ def _create_new_class_tab():
     up = st.file_uploader("Chọn file roster (CSV/XLSX)", type=["csv", "xlsx"], key="roster_uploader")
 
     if st.button("Tạo lớp", type="primary", disabled=(not class_name)):
-        if not class_name:
-            st.error("Vui lòng nhập tên lớp.")
+        if not is_roster_sheet_name(class_name):
+            st.error("Tên lớp không hợp lệ. Yêu cầu: chỉ chữ/số (không khoảng trắng), có ít nhất 1 chữ và 1 số, và không chứa test/question/likert/mcq.")
             return
         # Đọc file (nếu có) hoặc tạo rỗng với header mẫu
         if up is not None:
@@ -1011,7 +1051,11 @@ def _read_mcq_sheet(class_code: str) -> pd.DataFrame:
 def _mcq_stats_tab():
     st.markdown("#### 📊 Thống kê MCQ theo câu hỏi")
     classes = get_class_rosters()
-    class_code = st.selectbox("Chọn lớp", options=classes)
+    class_code = st.selectbox("Chọn lớp", options=classes or ["(Chưa có lớp)"])
+    if not classes:
+        st.info("Chưa có roster lớp hợp lệ.")
+        return
+
     df = _read_mcq_sheet(class_code)
     if df.empty:
         st.info("Chưa có dữ liệu MCQ cho lớp này.")
@@ -1072,7 +1116,11 @@ def _mcq_stats_tab():
 def _ai_assistant_tab():
     st.markdown("#### 🤖 Trợ lý AI (từ khóa ngắn)")
     classes = get_class_rosters()
-    class_code = st.selectbox("Chọn lớp", options=classes, key="ai_class")
+    class_code = st.selectbox("Chọn lớp", options=classes or ["(Chưa có lớp)"], key="ai_class")
+    if not classes:
+        st.info("Chưa có roster lớp hợp lệ.")
+        return
+
     df = _read_mcq_sheet(class_code)
     if df.empty:
         st.info("Chưa có dữ liệu MCQ cho lớp này.")
@@ -1152,15 +1200,14 @@ def _diagnose_responses():
         "Kết quả được ghi theo từng lớp:\n"
         "- Likert: Likert<CLASS> (VD: LikertD25A, LikertD25C)\n"
         "- MCQ: MCQ<CLASS> (VD: MCQD25A, MCQD25C)\n"
-        "Danh sách lớp gốc (whitelist): D25A, D25B, D25C... (cột: STT | MSSV | Họ và Tên | NTNS | Tổ)."
+        "Danh sách lớp gốc (whitelist): tên chỉ chữ+số, có ít nhất 1 chữ và 1 số."
     )
 
 def _view_responses():
     _diagnose_responses()
 
 def teacher_panel():
-    
-    
+    st.header("Bảng điều khiển Giảng viên")
     if not teacher_login():
         return
 
@@ -1217,21 +1264,17 @@ if page == "Sinh viên":
 
 elif page == "Giảng viên":
     render_banner()
+    st.title("Khu vực Giảng viên")
     teacher_panel()
 
 else:
     render_banner()
     st.title("Hướng dẫn nhanh")
     st.markdown(
-        "- **Sinh viên:** đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert 36** hoặc **MCQ 4 đáp án** → bấm **Bắt đầu** mới hiển thị đề & **bắt giờ** → **Nộp bài**.  \n"
-        "- **Giảng viên:** xem/tải ngân hàng Likert & MCQ; tạo lớp mới; xem **thống kê MCQ** (biểu đồ cột tương tác); dùng **Trợ lý AI** để hỏi nhanh về sớm/muộn, cao/ thấp điểm.  \n"
-        "- **Google Sheets:**\n"
-        "  - `Question`: ngân hàng Likert (`quiz_id | q_index | facet | question | left_label | right_label | reverse`)\n"
-        "  - `MCQ_Questions`: ngân hàng MCQ (`quiz_id | q_index | question | optionA..D | correct`)\n"
-        "  - `D25A`, `D25B`, `D25C`...: roster gốc (`STT | MSSV | Họ và Tên | NTNS | Tổ`)\n"
-        "  - `Likert<CLASS>`, `MCQ<CLASS>`: kết quả theo lớp.\n"
-        "- Nếu lỗi quyền, hãy **Share** file cho service account trong secrets, quyền **Editor**."
+        "- **Sinh viên:** đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert 36** hoặc **MCQ 4 đáp án** → bấm **Bắt đầu** để hiển thị đề & **bắt giờ đếm ngược** → **Nộp bài**.\n\n"
+        "- **Giảng viên:** xem/tải ngân hàng Likert & MCQ; tạo lớp mới; xem **thống kê MCQ** (biểu đồ cột tương tác); dùng **Trợ lý AI** để hỏi nhanh về sớm/muộn, cao/ thấp điểm."
     )
+
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
