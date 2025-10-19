@@ -1207,7 +1207,7 @@ def _view_responses():
     _diagnose_responses()
 
 def teacher_panel():
-    st.header("Bảng điều khiển Giảng viên")
+    
     if not teacher_login():
         return
 
@@ -1264,7 +1264,6 @@ if page == "Sinh viên":
 
 elif page == "Giảng viên":
     render_banner()
-    st.title("Khu vực Giảng viên")
     teacher_panel()
 
 else:
