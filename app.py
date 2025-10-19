@@ -24,36 +24,27 @@ def srequire(key):
     return val
 
 # ============================================================
-# 🎓 CẤU HÌNH CƠ BẢN - DỄ TÙY CHỈNH
+# 🎓 CẤU HÌNH — CHỈ MỘT KHỐI NÀY THÔI
 # ============================================================
 
-# 👨‍🏫 Tài khoản đăng nhập giảng viên (bắt buộc có trong Secrets)
+# 👨‍🏫 Tài khoản GV: bắt buộc có trong Secrets (không có mặc định)
 TEACHER_USER = srequire("TEACHER_USER")
 TEACHER_PASS = srequire("TEACHER_PASS")
 
 # ⏱️ Thời gian làm bài (phút)
-TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", 20))
-MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", 20))
+TIME_LIMIT_MIN      = int(sget("TIME_LIMIT_MIN", 20))       # Likert
+MCQ_TIME_LIMIT_MIN  = int(sget("MCQ_TIME_LIMIT_MIN", 20))   # MCQ
 
-# 📋 Mã đề trắc nghiệm (tùy bạn đặt)
+# 📋 Mã đề
 QUIZ_ID = sget("QUIZ_ID", "PSY36")
 
-# ============================================================
-# PHẦN LOGIC APP BÊN DƯỚI
-# ============================================================
-
-# Lấy cấu hình thực tế (ưu tiên secrets, fallback default ở đầu file)
-QUIZ_ID        = sget("QUIZ_ID", QUIZ_ID_DEFAULT)
-TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", TIME_LIMIT_MIN_DEFAULT))
-MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", MCQ_TIME_LIMIT_MIN_DEFAULT))
-TEACHER_USER   = str(sget("TEACHER_USER", TEACHER_USER_DEFAULT)).strip()
-TEACHER_PASS   = str(sget("TEACHER_PASS", TEACHER_PASS_DEFAULT)).strip()
-
+# 📄 Google Sheets (bắt buộc ID file)
 QUESTIONS_SPREADSHEET_ID = srequire("QUESTIONS_SPREADSHEET_ID")
-QUESTIONS_SHEET_NAME     = sget("QUESTIONS_SHEET_NAME", "Question")
-MCQ_QUESTIONS_SHEET_NAME = sget("MCQ_QUESTIONS_SHEET_NAME", "MCQ_Questions")
-
 RESPONSES_SPREADSHEET_ID = srequire("RESPONSES_SPREADSHEET_ID")
+
+# Tên worksheet (có thể để mặc định)
+QUESTIONS_SHEET_NAME      = sget("QUESTIONS_SHEET_NAME", "Question")
+MCQ_QUESTIONS_SHEET_NAME  = sget("MCQ_QUESTIONS_SHEET_NAME", "MCQ_Questions")
 
 # =========================
 # GOOGLE SHEETS HELPERS
