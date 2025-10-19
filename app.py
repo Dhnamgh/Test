@@ -1,64 +1,14 @@
-# app.py
-# ============================================================
-# 🎓 CẤU HÌNH CƠ BẢN - DỄ TÙY CHỈNH
-# ============================================================
-
-# 👨‍🏫 Tài khoản đăng nhập giảng viên (có thể thay trong Scret)
-# BẮT BUỘC có trong Secrets, nếu thiếu sẽ báo lỗi và stop()
-TEACHER_USER = srequire("TEACHER_USER")
-TEACHER_PASS = srequire("TEACHER_PASS")
-
-# ⏱️ Thời gian làm bài (phút)
-TIME_LIMIT_MIN_DEFAULT = 20          # cho Likert
-MCQ_TIME_LIMIT_MIN_DEFAULT = 20      # cho MCQ
-
-# 📋 Mã đề trắc nghiệm (tùy bạn đặt)
-QUIZ_ID_DEFAULT = "PSY36"
-
-# ============================================================
-# Phần dưới tự động đọc secrets (nếu có) và fallback về default ở trên
-# ============================================================
-
-import re
-import time
-from datetime import datetime
-import hashlib
-
+import re, time, hashlib
 import streamlit as st
 import pandas as pd
 import numpy as np
 import gspread
 from google.oauth2.service_account import Credentials
+from datetime import datetime
 
-# Chart backend: ưu tiên Plotly, nếu thiếu thì dùng Altair
-try:
-    import plotly.express as px
-    HAS_PLOTLY = True
-except Exception:
-    HAS_PLOTLY = False
-    import altair as alt  # Altair thường có sẵn với Streamlit
-
-# =========================
-# PAGE CONFIG + BANNER
-# =========================
-st.set_page_config(page_title="Hệ thống trắc nghiệm trực tuyến", layout="wide")
-
-def render_banner():
-    st.markdown(
-        (
-            "<div style='padding:10px 16px;border-radius:10px;"
-            "background:#1e90ff;color:#ffffff;font-weight:600;"
-            "display:flex;align-items:center;gap:10px;"
-            "box-shadow:0 2px 5px rgba(0,0,0,0.2);'>"
-            "Hệ thống trắc nghiệm trực tuyến"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-
-# =========================
+# ============================================================
 # SECRETS HELPERS
-# =========================
+# ============================================================
 def sget(key, default=None):
     if key in st.secrets:
         return st.secrets[key]
@@ -72,6 +22,25 @@ def srequire(key):
         st.error(f"❌ Thiếu khóa secrets: {key}. Vào Manage app → Settings → Secrets để bổ sung.")
         st.stop()
     return val
+
+# ============================================================
+# 🎓 CẤU HÌNH CƠ BẢN - DỄ TÙY CHỈNH
+# ============================================================
+
+# 👨‍🏫 Tài khoản đăng nhập giảng viên (bắt buộc có trong Secrets)
+TEACHER_USER = srequire("TEACHER_USER")
+TEACHER_PASS = srequire("TEACHER_PASS")
+
+# ⏱️ Thời gian làm bài (phút)
+TIME_LIMIT_MIN = int(sget("TIME_LIMIT_MIN", 20))
+MCQ_TIME_LIMIT_MIN = int(sget("MCQ_TIME_LIMIT_MIN", 20))
+
+# 📋 Mã đề trắc nghiệm (tùy bạn đặt)
+QUIZ_ID = sget("QUIZ_ID", "PSY36")
+
+# ============================================================
+# PHẦN LOGIC APP BÊN DƯỚI
+# ============================================================
 
 # Lấy cấu hình thực tế (ưu tiên secrets, fallback default ở đầu file)
 QUIZ_ID        = sget("QUIZ_ID", QUIZ_ID_DEFAULT)
