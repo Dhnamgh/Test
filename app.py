@@ -768,46 +768,68 @@ def upsert_mcq_response(mssv: str, hoten: str, answers: dict, total_correct: int
 # =========================
 # TEACHER (GV) PANEL
 # =========================
-def _get_teacher_creds():
-    # Đọc từ secrets mỗi lần (hỗ trợ root và [app])
-    def _sget(key):
-        if key in st.secrets:
-            return st.secrets[key]
-        if "app" in st.secrets and key in st.secrets["app"]:
-            return st.secrets["app"][key]
-        return None
-    u = _sget("TEACHER_USER")
-    p = _sget("TEACHER_PASS")
+def _get_teacher_creds_strict():
+    """Đọc credentials từ Secrets (root hoặc [app]). Báo lỗi nếu thiếu."""
+    def _pick(scope):
+        if not scope:
+            return None, None
+        u = scope.get("TEACHER_USER")
+        p = scope.get("TEACHER_PASS")
+        return (str(u).strip() if u is not None else None,
+                str(p).strip() if p is not None else None)
+
+    # Ưu tiên root, sau đó đến [app]
+    u, p = _pick(st.secrets)
     if not u or not p:
-        st.error("❌ Chưa cấu hình TEACHER_USER / TEACHER_PASS trong Secrets.")
+        u, p = _pick(st.secrets.get("app", {}))
+
+    if not u or not p:
+        st.error("❌ Chưa cấu hình TEACHER_USER / TEACHER_PASS trong Secrets (root hoặc [app]).")
         st.stop()
-    return str(u).strip(), str(p).strip()
+    return u, p
 
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
 
+    # Đã đăng nhập
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
-        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv"):
+        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn"):
             st.session_state["is_teacher"] = False
             st.success("Đã đăng xuất.")
             st.rerun()
         return True
 
+    # Form đăng nhập
     with st.form("teacher_login_form"):
         u_in = st.text_input("Tài khoản", value="", placeholder="teacher")
         p_in = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
         ok = st.form_submit_button("Đăng nhập")
 
     if ok:
-        u_sec, p_sec = _get_teacher_creds()
+        # Luôn đọc từ Secrets TẠI THỜI ĐIỂM NHẤN NÚT
+        u_sec, p_sec = _get_teacher_creds_strict()
         if u_in.strip() == u_sec and p_in.strip() == p_sec:
             st.session_state["is_teacher"] = True
             st.success("Đăng nhập thành công.")
             st.rerun()
         else:
+            # Khối chẩn đoán an toàn (không lộ mật khẩu)
+            masked_user = u_sec[:1] + "•"*(max(0, len(u_sec)-2)) + u_sec[-1:]
+            masked_pass_len = len(p_sec)
             st.error("Sai tài khoản hoặc mật khẩu.")
+            with st.expander("🔧 Chẩn đoán đăng nhập (không lộ mật khẩu)"):
+                st.write({
+                    "secrets_loaded_from": "root" if ("TEACHER_USER" in st.secrets or "TEACHER_PASS" in st.secrets)
+                                          else "[app]" if ("app" in st.secrets and ("TEACHER_USER" in st.secrets["app"] or "TEACHER_PASS" in st.secrets["app"]))
+                                          else "❌ not found",
+                    "expected_user(masked)": masked_user,
+                    "expected_pass_length": masked_pass_len,
+                    "input_user": u_in.strip(),
+                    "input_pass_length": len(p_in.strip()),
+                })
     return False
+
 
 
 def _diagnose_questions():
