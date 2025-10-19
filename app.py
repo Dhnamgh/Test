@@ -42,8 +42,6 @@ def srequire(key):
 # CẤU HÌNH
 # =========================
 # 👨‍🏫 Tài khoản GV: bắt buộc có trong Secrets
-TEACHER_USER = srequire("TEACHER_USER")
-TEACHER_PASS = srequire("TEACHER_PASS")
 
 # ⏱️ Thời gian làm bài (phút)
 TIME_LIMIT_MIN     = int(sget("TIME_LIMIT_MIN", 20))      # Likert
