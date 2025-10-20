@@ -651,25 +651,36 @@ def _get_teacher_creds_strict():
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
 
+    # Đã đăng nhập
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
         if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn"):
             st.session_state["is_teacher"] = False
-            st.success("Đã đăng xuất."); st.rerun()
+            st.success("Đã đăng xuất.")
+            st.rerun()
         return True
 
-    with st.form("teacher_login_form"):
-        u_in = st.text_input("Tài khoản", value="", placeholder="lecturer")
-        p_in = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password")
-        ok = st.form_submit_button("Đăng nhập")
+    # Form có key tường minh cho các ô
+    with st.form("teacher_login_form", clear_on_submit=False):
+        st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user")
+        st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass")
+        ok = st.form_submit_button("Đăng nhập", use_container_width=False)
 
     if ok:
+        u_in = _normalize_credential(st.session_state.get("gv_user", ""))
+        p_in = _normalize_credential(st.session_state.get("gv_pass", ""))
+
+        if not u_in:
+            st.error("Vui lòng nhập Tài khoản."); return False
+
         u_sec, p_sec = _get_teacher_creds_strict()
-        u_in_n = _normalize_credential(u_in)
-        p_in_n = _normalize_credential(p_in)
-        if u_in_n == u_sec and p_in_n == p_sec:
+        if u_in == u_sec and p_in == p_sec:
             st.session_state["is_teacher"] = True
-            st.success("Đăng nhập thành công."); st.rerun()
+            st.success("Đăng nhập thành công.")
+            # Xóa nội dung ô nhập sau khi đăng nhập
+            st.session_state["gv_user"] = ""
+            st.session_state["gv_pass"] = ""
+            st.rerun()
         else:
             st.error("Sai tài khoản hoặc mật khẩu.")
             with st.expander("🔧 Chẩn đoán đăng nhập (không lộ mật khẩu)"):
@@ -677,10 +688,11 @@ def teacher_login() -> bool:
                     "secrets_loaded_from": "[app]" if ("app" in st.secrets and ("TEACHER_USER" in st.secrets["app"] or "TEACHER_PASS" in st.secrets["app"])) else "root",
                     "expected_user(masked)": (u_sec[:1] + "•"*(max(0,len(u_sec)-2)) + u_sec[-1:]),
                     "expected_pass_length": len(p_sec),
-                    "input_user": u_in_n,
-                    "input_pass_length": len(p_in_n),
+                    "input_user": u_in,
+                    "input_pass_length": len(p_in),
                 })
     return False
+
 
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question")
