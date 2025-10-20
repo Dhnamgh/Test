@@ -1,24 +1,9 @@
 # app.py
-
 # =========================
 # IMPORTS & PAGE CONFIG
 # =========================
 import re, time, hashlib, unicodedata
 from datetime import datetime
-def normalize_vietnamese_name(name: str) -> str:
-    """
-    Chuẩn hóa họ tên tiếng Việt:
-      - Bỏ khoảng trắng thừa
-      - Viết hoa chữ cái đầu mỗi từ
-      - Giữ nguyên dấu tiếng Việt
-      - Không phân biệt chữ hoa/thường khi nhập
-    """
-    if not isinstance(name, str):
-        return ""
-    name = name.strip().lower()
-    parts = re.split(r"\s+", name)
-    normalized = " ".join(p.capitalize() for p in parts if p)
-    return normalized
 
 import streamlit as st
 import pandas as pd
@@ -58,11 +43,27 @@ def _normalize_credential(s: str) -> str:
     if s is None:
         return ""
     s = unicodedata.normalize("NFKC", str(s))
-    # loại ký tự ẩn thường gặp
     for z in ["\u200b", "\u200c", "\u200d", "\u2060"]:
         s = s.replace(z, "")
     s = s.replace("\xa0", " ")
     return s.strip()
+
+# =========================
+# CHUẨN HÓA HỌ TÊN
+# =========================
+def normalize_vietnamese_name(name: str) -> str:
+    """
+    Chuẩn hóa họ tên tiếng Việt:
+      - Bỏ khoảng trắng thừa
+      - Viết hoa chữ cái đầu mỗi từ
+      - Giữ nguyên dấu tiếng Việt
+      - Không phân biệt chữ hoa/thường khi nhập
+    """
+    if not isinstance(name, str):
+        return ""
+    name = name.strip().lower()
+    parts = re.split(r"\s+", name)
+    return " ".join(p.capitalize() for p in parts if p)
 
 # =========================
 # CẤU HÌNH TỪ SECRETS
@@ -164,16 +165,55 @@ def _row1(ws):
     rng = ws.batch_get(['1:1'])
     return rng[0][0] if (rng and rng[0]) else []
 
+# ===== FIX 1: an toàn với dòng rỗng
 def attempt_exists_fast(ws, mssv: str) -> bool:
-    header = _row1(ws)
-    if not header or "MSSV" not in header:
+    """
+    Kiểm tra MSSV đã có trên sheet chưa.
+    Dùng col_values() để tránh IndexError khi có hàng rỗng.
+    """
+    header = ws.row_values(1)
+    if not header:
         return False
-    col_mssv_idx = header.index("MSSV")+1
-    col_letter = _col_idx_to_letter(col_mssv_idx)
-    data = ws.batch_get([f"{col_letter}2:{col_letter}"])
-    col_vals = [r[0] for r in data[0]] if (data and data[0]) else []
+    try:
+        col_mssv_idx = header.index("MSSV") + 1  # 1-based
+    except ValueError:
+        return False
+    try:
+        col_vals = ws.col_values(col_mssv_idx)[1:]  # từ dòng 2
+    except Exception:
+        return False
     target = str(mssv).strip()
-    return any((str(v).strip() == target) for v in col_vals)
+    return any(str(v).strip() == target for v in col_vals if v is not None)
+
+# ===== FIX 2: luôn ghi đúng dòng trống đầu tiên
+def _find_row_for_write(header: list, rows: list[list], mssv: str) -> int:
+    """
+    Trả về số dòng (1-based) để ghi:
+    - Nếu đã có MSSV → trả về dòng đó (tránh trùng).
+    - Nếu chưa có → tìm dòng trống đầu tiên (các cột định danh rỗng).
+    - Nếu không có dòng trống → ghi xuống dòng cuối + 1.
+    """
+    mssv = str(mssv).strip()
+    col_mssv = header.index("MSSV") if "MSSV" in header else None
+
+    # 1) Tồn tại MSSV
+    if col_mssv is not None:
+        for i, r in enumerate(rows, start=2):
+            if len(r) > col_mssv and str(r[col_mssv]).strip() == mssv:
+                return i
+
+    # 2) Dòng trống đầu tiên
+    id_cols = [c for c in ["MSSV","Họ và Tên","NTNS","Tổ"] if c in header]
+    id_idx  = [header.index(c) for c in id_cols]
+    for i, r in enumerate(rows, start=2):
+        cells = [(r[j].strip() if len(r) > j else "") for j in id_idx]
+        if all(c == "" for c in cells):
+            return i
+        if col_mssv is not None and (len(r) <= col_mssv or str(r[col_mssv]).strip() == ""):
+            return i
+
+    # 3) Thêm cuối
+    return len(rows) + 2
 
 # =========================
 # LỚP (roster gốc) & Responses
@@ -239,7 +279,7 @@ def load_whitelist_students_by_class(class_code: str):
         m = r[i_mssv].strip()
         if not m: continue
         wl[m] = {
-            "name": r[i_name].strip() if len(r)>i_name else "",
+            "name": normalize_vietnamese_name(r[i_name].strip() if len(r)>i_name else ""),
             "dob":  r[i_dob].strip()  if (i_dob is not None and len(r)>i_dob) else "",
             "to":   r[i_to].strip()   if (i_to  is not None and len(r)>i_to)  else "",
         }
@@ -324,25 +364,22 @@ def init_exam_state():
 
 def student_gate() -> bool:
     """
-    Đăng nhập SV (giữ tên hàm cũ để app không lỗi).
-    - Chọn lớp từ roster có sẵn
-    - Nhập MSSV, Họ & Tên (không phân biệt hoa/thường; tự chuẩn hóa)
-    - Kiểm tra MSSV có trong lớp; tên sẽ chuẩn hóa theo roster
+    Đăng nhập SV:
+    - Chọn lớp (từ roster gốc)
+    - Nhập MSSV, Họ & Tên (tự chuẩn hóa)
+    - Kiểm tra MSSV tồn tại trong lớp; tên lưu theo roster
     """
-    # Khởi tạo state nếu cần
     init_exam_state()
     if st.session_state.get("sv_allow"):
         return True
 
     st.subheader("Đăng nhập Sinh viên")
-
     with st.form("sv_login_unified"):
-        # Danh sách lớp lấy từ file Responses theo quy ước (D25A, D25C, ...)
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
         mssv = st.text_input("MSSV", placeholder="VD: 511256000").strip()
         hoten_input = st.text_input(
-            "Họ và Tên (không cần viết hoa, có dấu hoặc không đều được)"
+            "Họ và Tên (Không phân biệt chữ hoa, thường)"
         ).strip()
         agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
         submitted = st.form_submit_button("🔑 Đăng nhập")
@@ -350,35 +387,30 @@ def student_gate() -> bool:
     if not submitted:
         return False
 
-    # Kiểm tra dữ liệu tối thiểu
     if not class_code:
-        st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp."); 
+        st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp.")
         return False
     if not mssv or not hoten_input:
-        st.error("Vui lòng nhập MSSV và Họ & Tên."); 
+        st.error("Vui lòng nhập MSSV và Họ & Tên.")
         return False
     if not agree:
-        st.error("Vui lòng tích xác nhận."); 
+        st.error("Vui lòng tích xác nhận.")
         return False
 
-    # Lấy whitelist theo lớp
     wl = load_whitelist_students_by_class(class_code)  # {mssv: {name, dob, to}}
     if mssv not in wl:
         st.error(f"MSSV không nằm trong lớp {class_code}.")
         return False
 
-    # Chuẩn hóa tên nhập và tên trong roster
     hoten_norm_input = normalize_vietnamese_name(hoten_input)
     roster_name = normalize_vietnamese_name(wl[mssv].get("name", ""))
 
-    # Nếu tên nhập khác tên roster, hiển thị cảnh báo nhẹ, nhưng dùng tên roster
     if roster_name and hoten_norm_input and hoten_norm_input != roster_name:
         st.warning(
             f"Tên bạn nhập **{hoten_norm_input}** khác với danh sách lớp: **{roster_name}**. "
             "Hệ thống sẽ dùng tên theo danh sách lớp."
         )
 
-    # Lưu thông tin SV (tên đã chuẩn hóa: ưu tiên theo roster)
     st.session_state.update({
         "sv_class": class_code.strip(),
         "sv_mssv": mssv.strip(),
@@ -389,6 +421,7 @@ def student_gate() -> bool:
     st.success(f"🎓 Xin chào **{st.session_state['sv_hoten']}** ({mssv}) – Lớp {class_code}")
     st.rerun()
     return False
+
 # =========================
 # LIKERT EXAM
 # =========================
@@ -418,6 +451,8 @@ def likert36_exam():
 
     df = load_questions_df()
     n_questions = len(df)
+    if n_questions == 0:
+        st.warning("Chưa có câu hỏi Likert."); return
     st.success(f"Đề {QUIZ_ID} — {n_questions} câu (Likert 1..5)")
 
     class_code = st.session_state.get("sv_class","")
@@ -496,33 +531,30 @@ def do_submit_likert(df_questions: pd.DataFrame):
             st.error("Bạn đã nộp bài Likert trước đó."); return
 
         rows = ws.get_all_values()[1:]
-        col_mssv = header.index("MSSV")
-        found = None
-        for idx, r in enumerate(rows, start=2):
-            if len(r)>col_mssv and r[col_mssv].strip()==mssv: found=idx; break
-        if not found:
-            found = len(rows)+2
-            # thông tin định danh
-            for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
-                if col_name in header:
-                    cidx = header.index(col_name)+1
-                    ws.update_acell(f"{_col_idx_to_letter(cidx)}{found}", value)
-            info = load_whitelist_students_by_class(class_code).get(mssv, {})
-            for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
-                if col_name in header and key in info and info[key]:
-                    cidx = header.index(col_name)+1
-                    ws.update_acell(f"{_col_idx_to_letter(cidx)}{found}", info[key])
+        target_row = _find_row_for_write(header, rows, mssv)
+
+        # Ghi thông tin định danh
+        for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+            if col_name in header:
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
+
+        info = load_whitelist_students_by_class(class_code).get(mssv, {})
+        for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+            if col_name in header and info.get(key, ""):
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
 
         now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
         updates = []
         for i in range(1,37):
             if str(i) in header:
                 cidx = header.index(str(i))+1
-                updates.append({"range": f"{_col_idx_to_letter(cidx)}{found}", "values": [[ans_map.get(i,"")]]})
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[ans_map.get(i,"")]]})
         for col_name, value in {"submitted_at": now_iso, "quiz_id": QUIZ_ID, "class": class_code}.items():
             if col_name in header:
                 cidx = header.index(col_name)+1
-                updates.append({"range": f"{_col_idx_to_letter(cidx)}{found}", "values": [[value]]})
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[value]]})
         if updates: ws.batch_update(updates)
     except Exception as e:
         st.error(f"Lỗi ghi Likert: {e}"); return
@@ -557,36 +589,37 @@ def upsert_mcq_response(mssv, hoten, answers, total_correct, n_questions):
         st.error("Bạn đã nộp MCQ trước đó."); return
 
     rows = ws.get_all_values()[1:]
-    col_mssv = header.index("MSSV") if "MSSV" in header else 1
-    found = None
-    for idx, r in enumerate(rows, start=2):
-        if len(r)>col_mssv and r[col_mssv].strip()==mssv: found=idx; break
-    if not found:
-        found = len(rows)+2
-        for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
-            if col_name in header:
-                cidx = header.index(col_name)+1
-                ws.update_acell(f"{_col_idx_to_letter(cidx)}{found}", value)
-        info = load_whitelist_students_by_class(class_code).get(mssv, {})
-        for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
-            if col_name in header and key in info and info[key]:
-                cidx = header.index(col_name)+1
-                ws.update_acell(f"{_col_idx_to_letter(cidx)}{found}", info[key])
+    target_row = _find_row_for_write(header, rows, mssv)
 
+    # Ghi định danh
+    for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+        if col_name in header:
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
+
+    info = load_whitelist_students_by_class(class_code).get(mssv, {})
+    for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+        if col_name in header and info.get(key, ""):
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
+
+    # Đáp án + meta
     updates = []
     for q in range(1, n_questions+1):
         if str(q) in header:
             cidx = header.index(str(q))+1
-            updates.append({"range": f"{_col_idx_to_letter(cidx)}{found}", "values": [[answers.get(q,"")]]})
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[answers.get(q,"")]]})
     for col_name, value in {
         "score": total_correct,
         "submitted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "quiz_id": QUIZ_ID,
-        "class": st.session_state.get("sv_class","").strip()
+        "class": class_code
     }.items():
         if col_name in header:
             cidx = header.index(col_name)+1
-            updates.append({"range": f"{_col_idx_to_letter(cidx)}{found}", "values": [[value]]})
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[value]]})
     if updates: ws.batch_update(updates)
 
 def mcq_exam():
@@ -695,16 +728,13 @@ def _get_teacher_creds_strict():
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
 
-    # Đã đăng nhập
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
         if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
             st.session_state["is_teacher"] = False
-            st.success("Đã đăng xuất.")
-            st.rerun()
+            st.success("Đã đăng xuất."); st.rerun()
         return True
 
-    # Không dùng form để tránh autofill/xung đột
     u_val = st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user_simple")
     p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_simple")
 
@@ -719,7 +749,6 @@ def teacher_login() -> bool:
         u_sec, p_sec = _get_teacher_creds_strict()
         if u_in == u_sec and p_in == p_sec:
             st.session_state["is_teacher"] = True
-            # Xoá key nếu có, tránh lỗi Streamlit
             for k in ("gv_user", "gv_pass", "gv_user_simple", "gv_pass_simple"):
                 st.session_state.pop(k, None)
             st.success("Đăng nhập thành công.")
@@ -735,8 +764,6 @@ def teacher_login() -> bool:
                     "input_pass_length": len(p_in),
                 })
     return False
-
-
 
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question")
@@ -856,8 +883,10 @@ def _create_new_class_tab():
     class_name = st.text_input("Tên lớp", placeholder="VD: D25B").strip()
     up = st.file_uploader("Chọn file roster (CSV/XLSX)", type=["csv","xlsx"], key="roster_uploader")
     if st.button("Tạo lớp", type="primary", disabled=(not class_name)):
+        # Kiểm tra tên lớp
         if not is_roster_sheet_name(class_name):
             st.error("Tên lớp không hợp lệ (chỉ chữ/số, có ≥1 chữ & ≥1 số, không chứa test/question/likert/mcq)."); return
+        # Đọc dữ liệu
         if up is not None:
             try:
                 if up.name.lower().endswith(".csv"): df = pd.read_csv(up)
@@ -869,6 +898,7 @@ def _create_new_class_tab():
             df = pd.DataFrame(columns=["STT","MSSV","Họ và Tên","NTNS","Tổ"])
         for c in ["STT","MSSV","Họ và Tên","NTNS","Tổ"]:
             if c not in df.columns: df[c]=""
+        df["Họ và Tên"] = df["Họ và Tên"].apply(normalize_vietnamese_name)
         df = df[["STT","MSSV","Họ và Tên","NTNS","Tổ"]]
         try:
             gc = get_gspread_client()
@@ -934,19 +964,6 @@ def _mcq_stats_tab():
                  .interactive())
         st.altair_chart(chart, use_container_width=True)
 
-def _ai_assistant_tab():
-    st.markdown("#### 🤖 Trợ lý AI (từ khóa ngắn)")
-    classes = get_class_rosters()
-    if not classes: st.info("Chưa có roster lớp."); return
-    class_code = st.selectbox("Chọn lớp", options=classes, key="ai_class")
-    df = _read_mcq_sheet(class_code)
-    if df.empty: st.info("Chưa có dữ liệu MCQ."); return
-    if "score" not in df.columns: st.warning("Sheet MCQ chưa có cột 'score'.")
-    if "submitted_at" not in df.columns: st.warning("Sheet MCQ chưa có cột 'submitted_at'.")
-    q = st.text_input("Nhập từ khóa (vd: sớm nhất / muộn nhất / cao điểm / thấp điểm)")
-    if st.button("Hỏi"):
-        st.write(_ai_answer_from_df(df, q))
-
 def _parse_ts(s):
     try: return pd.to_datetime(s)
     except Exception: return pd.NaT
@@ -975,6 +992,19 @@ def _ai_answer_from_df(df: pd.DataFrame, query: str) -> str:
         if len(dfv): r=dfv.iloc[0]; who=r.get('Họ và Tên','') or r.get('MSSV','?'); return f"Thấp điểm nhất: {who} — {int(r['score_num'])}"
         return "Chưa có điểm."
     return "Từ khóa gợi ý: sớm nhất, muộn nhất, cao điểm, thấp điểm."
+
+def _ai_assistant_tab():
+    st.markdown("#### 🤖 Trợ lý AI (từ khóa ngắn)")
+    classes = get_class_rosters()
+    if not classes: st.info("Chưa có roster lớp."); return
+    class_code = st.selectbox("Chọn lớp", options=classes, key="ai_class")
+    df = _read_mcq_sheet(class_code)
+    if df.empty: st.info("Chưa có dữ liệu MCQ."); return
+    if "score" not in df.columns: st.warning("Sheet MCQ chưa có cột 'score'.")
+    if "submitted_at" not in df.columns: st.warning("Sheet MCQ chưa có cột 'submitted_at'.")
+    q = st.text_input("Nhập từ khóa (vd: sớm nhất / muộn nhất / cao điểm / thấp điểm)")
+    if st.button("Hỏi"):
+        st.write(_ai_answer_from_df(df, q))
 
 def _diagnose_responses():
     st.markdown("#### ℹ️ Ghi chú Responses")
@@ -1005,7 +1035,8 @@ page = st.sidebar.radio("Đi đến", ["Sinh viên", "Giảng viên", "Hướng 
 
 if page == "Sinh viên":
     render_banner()
-    
+    st.title("Sinh viên làm bài")
+
     # Đăng xuất SV
     if st.session_state.get("sv_allow") or st.session_state.get("likert_started") or st.session_state.get("mcq_started"):
         if st.button("🚪 Đăng xuất", type="secondary"):
