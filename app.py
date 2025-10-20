@@ -1035,8 +1035,7 @@ page = st.sidebar.radio("Đi đến", ["Sinh viên", "Giảng viên", "Hướng 
 
 if page == "Sinh viên":
     render_banner()
-    st.title("Sinh viên làm bài")
-
+    
     # Đăng xuất SV
     if st.session_state.get("sv_allow") or st.session_state.get("likert_started") or st.session_state.get("mcq_started"):
         if st.button("🚪 Đăng xuất", type="secondary"):
