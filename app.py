@@ -340,7 +340,7 @@ def student_gate() -> bool:
         # Danh sách lớp lấy từ file Responses theo quy ước (D25A, D25C, ...)
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
-        mssv = st.text_input("MSSV", placeholder="VD: 2112345").strip()
+        mssv = st.text_input("MSSV", placeholder="VD: 511256000").strip()
         hoten_input = st.text_input(
             "Họ và Tên (không cần viết hoa, có dấu hoặc không đều được)"
         ).strip()
