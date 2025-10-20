@@ -5,6 +5,20 @@
 # =========================
 import re, time, hashlib, unicodedata
 from datetime import datetime
+def normalize_vietnamese_name(name: str) -> str:
+    """
+    Chuẩn hóa họ tên tiếng Việt:
+      - Bỏ khoảng trắng thừa
+      - Viết hoa chữ cái đầu mỗi từ
+      - Giữ nguyên dấu tiếng Việt
+      - Không phân biệt chữ hoa/thường khi nhập
+    """
+    if not isinstance(name, str):
+        return ""
+    name = name.strip().lower()
+    parts = re.split(r"\s+", name)
+    normalized = " ".join(p.capitalize() for p in parts if p)
+    return normalized
 
 import streamlit as st
 import pandas as pd
@@ -308,42 +322,63 @@ def init_exam_state():
     st.session_state.setdefault("mcq_cursor", 0)
     st.session_state.setdefault("mcq_answers", {})
 
-def student_gate() -> bool:
-    init_exam_state()
-    if st.session_state.get("sv_allow"): return True
+def student_login(df_roster):
+    """
+    Giao diện đăng nhập Sinh viên:
+    - Nhập MSSV, Họ và tên, Tên lớp
+    - Kiểm tra tồn tại trong danh sách lớp
+    - Chuẩn hóa họ tên tiếng Việt
+    """
+    st.subheader("Đăng nhập Sinh viên")
 
-    with st.form("sv_login_unified"):
-        col0, col1, col2 = st.columns([1,1,2])
-        with col0:
-            options = get_class_rosters()
-            class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
-        with col1:
-            mssv = st.text_input("MSSV", placeholder="VD: 511256000")
-        with col2:
-            hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn Anh")
-        agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
-        submitted = st.form_submit_button("Đăng nhập")
+    # --- Form nhập liệu ---
+    with st.form("student_login_form"):
+        mssv = st.text_input("Mã số sinh viên (MSSV)").strip()
+        ho_ten = st.text_input("Họ và tên (không cần viết hoa, có dấu hoặc không đều được)").strip()
+        ten_lop = st.text_input("Tên lớp (ví dụ: D25A, D25C, ...)").strip().upper()
+        ok = st.form_submit_button("🔑 Đăng nhập")
 
-    if submitted:
-        if not class_code:
-            st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp."); return False
-        if not mssv or not hoten:
-            st.error("Vui lòng nhập MSSV và Họ & Tên."); return False
-        if not agree:
-            st.error("Vui lòng tích xác nhận."); return False
-        wl = load_whitelist_students_by_class(class_code)
-        if mssv.strip() not in wl:
-            st.error(f"MSSV không nằm trong lớp {class_code}."); return False
-        st.session_state.update({
-            "sv_class": class_code.strip(),
-            "sv_mssv": mssv.strip(),
-            "sv_hoten": hoten.strip(),
-            "sv_allow": True
-        })
-        st.success("Đăng nhập thành công."); st.rerun()
+    if not ok:
+        return None, None, None  # chưa nhấn
 
-    st.info("Vui lòng đăng nhập để chọn loại trắc nghiệm.")
-    return False
+    # --- Kiểm tra dữ liệu ---
+    if not mssv or not ho_ten or not ten_lop:
+        st.warning("⚠️ Vui lòng nhập đầy đủ MSSV, Họ và tên, và Tên lớp.")
+        return None, None, None
+
+    # Chuẩn hóa họ tên
+    ho_ten_norm = normalize_vietnamese_name(ho_ten)
+
+    # Đọc roster theo lớp
+    if "Lớp" in df_roster.columns:
+        df_class = df_roster[df_roster["Lớp"].astype(str).str.upper().eq(ten_lop)]
+    else:
+        df_class = df_roster  # nếu không có cột Lớp
+
+    if df_class.empty:
+        st.error(f"❌ Không tìm thấy lớp {ten_lop}.")
+        return None, None, None
+
+    # Chuẩn hóa cột tên trong dữ liệu lớp
+    df_class["Họ và Tên"] = df_class["Họ và Tên"].apply(normalize_vietnamese_name)
+
+    # Kiểm tra MSSV & Họ tên
+    match = df_class[
+        (df_class["MSSV"].astype(str).str.strip() == mssv)
+        & (df_class["Họ và Tên"] == ho_ten_norm)
+    ]
+
+    if match.empty:
+        st.error("❌ MSSV hoặc Họ tên không khớp với danh sách lớp.")
+        return None, None, None
+
+    # --- Lưu session ---
+    st.session_state["mssv"] = mssv
+    st.session_state["ho_ten"] = ho_ten_norm
+    st.session_state["ten_lop"] = ten_lop
+    st.success(f"🎓 Xin chào **{ho_ten_norm}** ({mssv}) – Lớp {ten_lop}")
+    return mssv, ho_ten_norm, ten_lop
+
 
 # =========================
 # LIKERT EXAM
