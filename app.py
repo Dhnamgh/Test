@@ -654,32 +654,31 @@ def teacher_login() -> bool:
     # Đã đăng nhập
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
-        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn"):
+        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
             st.session_state["is_teacher"] = False
             st.success("Đã đăng xuất.")
             st.rerun()
         return True
 
-    # Form có key tường minh cho các ô
-    with st.form("teacher_login_form", clear_on_submit=False):
-        st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user")
-        st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass")
-        ok = st.form_submit_button("Đăng nhập", use_container_width=False)
+    # Không dùng form để tránh autofill/xung đột
+    u_val = st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user_simple")
+    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_simple")
 
-    if ok:
-        u_in = _normalize_credential(st.session_state.get("gv_user", ""))
-        p_in = _normalize_credential(st.session_state.get("gv_pass", ""))
+    if st.button("Đăng nhập", type="primary", key="gv_login_btn_simple"):
+        u_in = _normalize_credential(u_val)
+        p_in = _normalize_credential(p_val)
 
         if not u_in:
-            st.error("Vui lòng nhập Tài khoản."); return False
+            st.error("Vui lòng nhập Tài khoản.")
+            return False
 
         u_sec, p_sec = _get_teacher_creds_strict()
         if u_in == u_sec and p_in == p_sec:
             st.session_state["is_teacher"] = True
+            # Xoá key nếu có, tránh lỗi Streamlit
+            for k in ("gv_user", "gv_pass", "gv_user_simple", "gv_pass_simple"):
+                st.session_state.pop(k, None)
             st.success("Đăng nhập thành công.")
-            # Xóa nội dung ô nhập sau khi đăng nhập
-            st.session_state["gv_user"] = ""
-            st.session_state["gv_pass"] = ""
             st.rerun()
         else:
             st.error("Sai tài khoản hoặc mật khẩu.")
@@ -692,6 +691,7 @@ def teacher_login() -> bool:
                     "input_pass_length": len(p_in),
                 })
     return False
+
 
 
 def _diagnose_questions():
