@@ -322,64 +322,73 @@ def init_exam_state():
     st.session_state.setdefault("mcq_cursor", 0)
     st.session_state.setdefault("mcq_answers", {})
 
-def student_login(df_roster):
+def student_gate() -> bool:
     """
-    Giao diện đăng nhập Sinh viên:
-    - Nhập MSSV, Họ và tên, Tên lớp
-    - Kiểm tra tồn tại trong danh sách lớp
-    - Chuẩn hóa họ tên tiếng Việt
+    Đăng nhập SV (giữ tên hàm cũ để app không lỗi).
+    - Chọn lớp từ roster có sẵn
+    - Nhập MSSV, Họ & Tên (không phân biệt hoa/thường; tự chuẩn hóa)
+    - Kiểm tra MSSV có trong lớp; tên sẽ chuẩn hóa theo roster
     """
+    # Khởi tạo state nếu cần
+    init_exam_state()
+    if st.session_state.get("sv_allow"):
+        return True
+
     st.subheader("Đăng nhập Sinh viên")
 
-    # --- Form nhập liệu ---
-    with st.form("student_login_form"):
-        mssv = st.text_input("Mã số sinh viên (MSSV)").strip()
-        ho_ten = st.text_input("Họ và tên (không cần viết hoa, có dấu hoặc không đều được)").strip()
-        ten_lop = st.text_input("Tên lớp (ví dụ: D25A, D25C, ...)").strip().upper()
-        ok = st.form_submit_button("🔑 Đăng nhập")
+    with st.form("sv_login_unified"):
+        # Danh sách lớp lấy từ file Responses theo quy ước (D25A, D25C, ...)
+        options = get_class_rosters()
+        class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
+        mssv = st.text_input("MSSV", placeholder="VD: 2112345").strip()
+        hoten_input = st.text_input(
+            "Họ và Tên (không cần viết hoa, có dấu hoặc không đều được)"
+        ).strip()
+        agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
+        submitted = st.form_submit_button("🔑 Đăng nhập")
 
-    if not ok:
-        return None, None, None  # chưa nhấn
+    if not submitted:
+        return False
 
-    # --- Kiểm tra dữ liệu ---
-    if not mssv or not ho_ten or not ten_lop:
-        st.warning("⚠️ Vui lòng nhập đầy đủ MSSV, Họ và tên, và Tên lớp.")
-        return None, None, None
+    # Kiểm tra dữ liệu tối thiểu
+    if not class_code:
+        st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp."); 
+        return False
+    if not mssv or not hoten_input:
+        st.error("Vui lòng nhập MSSV và Họ & Tên."); 
+        return False
+    if not agree:
+        st.error("Vui lòng tích xác nhận."); 
+        return False
 
-    # Chuẩn hóa họ tên
-    ho_ten_norm = normalize_vietnamese_name(ho_ten)
+    # Lấy whitelist theo lớp
+    wl = load_whitelist_students_by_class(class_code)  # {mssv: {name, dob, to}}
+    if mssv not in wl:
+        st.error(f"MSSV không nằm trong lớp {class_code}.")
+        return False
 
-    # Đọc roster theo lớp
-    if "Lớp" in df_roster.columns:
-        df_class = df_roster[df_roster["Lớp"].astype(str).str.upper().eq(ten_lop)]
-    else:
-        df_class = df_roster  # nếu không có cột Lớp
+    # Chuẩn hóa tên nhập và tên trong roster
+    hoten_norm_input = normalize_vietnamese_name(hoten_input)
+    roster_name = normalize_vietnamese_name(wl[mssv].get("name", ""))
 
-    if df_class.empty:
-        st.error(f"❌ Không tìm thấy lớp {ten_lop}.")
-        return None, None, None
+    # Nếu tên nhập khác tên roster, hiển thị cảnh báo nhẹ, nhưng dùng tên roster
+    if roster_name and hoten_norm_input and hoten_norm_input != roster_name:
+        st.warning(
+            f"Tên bạn nhập **{hoten_norm_input}** khác với danh sách lớp: **{roster_name}**. "
+            "Hệ thống sẽ dùng tên theo danh sách lớp."
+        )
 
-    # Chuẩn hóa cột tên trong dữ liệu lớp
-    df_class["Họ và Tên"] = df_class["Họ và Tên"].apply(normalize_vietnamese_name)
+    # Lưu thông tin SV (tên đã chuẩn hóa: ưu tiên theo roster)
+    st.session_state.update({
+        "sv_class": class_code.strip(),
+        "sv_mssv": mssv.strip(),
+        "sv_hoten": roster_name or hoten_norm_input,
+        "sv_allow": True
+    })
 
-    # Kiểm tra MSSV & Họ tên
-    match = df_class[
-        (df_class["MSSV"].astype(str).str.strip() == mssv)
-        & (df_class["Họ và Tên"] == ho_ten_norm)
-    ]
-
-    if match.empty:
-        st.error("❌ MSSV hoặc Họ tên không khớp với danh sách lớp.")
-        return None, None, None
-
-    # --- Lưu session ---
-    st.session_state["mssv"] = mssv
-    st.session_state["ho_ten"] = ho_ten_norm
-    st.session_state["ten_lop"] = ten_lop
-    st.success(f"🎓 Xin chào **{ho_ten_norm}** ({mssv}) – Lớp {ten_lop}")
-    return mssv, ho_ten_norm, ten_lop
-
-
+    st.success(f"🎓 Xin chào **{st.session_state['sv_hoten']}** ({mssv}) – Lớp {class_code}")
+    st.rerun()
+    return False
 # =========================
 # LIKERT EXAM
 # =========================
