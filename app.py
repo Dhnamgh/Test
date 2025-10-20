@@ -320,7 +320,7 @@ def student_gate() -> bool:
         with col1:
             mssv = st.text_input("MSSV", placeholder="VD: 511256000")
         with col2:
-            hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn A")
+            hoten = st.text_input("Họ và Tên", placeholder="VD: Nguyễn Văn Anh")
         agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
         submitted = st.form_submit_button("Đăng nhập")
 
