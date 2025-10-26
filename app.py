@@ -1110,7 +1110,4 @@ else:
     )
 
 st.markdown("---")
-st.markdown("© Bản quyền thuộc về TS...")
-
-st.markdown("---")
-st.markdown("© Bản quyền thuộc về TS...")
+st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh")
