@@ -2,6 +2,7 @@
 # =========================
 # IMPORTS & PAGE CONFIG
 # =========================
+from __future__ import annotations
 import re, time, hashlib, unicodedata
 from datetime import datetime
 
