@@ -209,27 +209,6 @@ def attempt_exists_fast(ws, mssv: str) -> bool:
 
 # ===== FIX 2: luôn ghi đúng dòng trống đầu tiên
 def _find_row_for_write(header: list, rows: list[list], mssv: str) -> int:
-
-
-def _build_row_from_payload(header, payload: dict):
-    return [payload.get(col, "") for col in header]
-
-def _append_row_retry(ws, row_values, max_attempts: int = 5):
-    delay = 0.5
-    last_err = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            ws.append_row(row_values, value_input_option="RAW", table_range="A1")
-            return
-        except Exception as e:
-            last_err = e
-            time.sleep(min(delay, 8.0))
-            delay *= 2
-    raise last_err
-
-def _append_payload_retry(ws, header, payload: dict, max_attempts: int = 5):
-    row = _build_row_from_payload(header, payload)
-    _append_row_retry(ws, row, max_attempts=max_attempts)
     """
     Trả về số dòng (1-based) để ghi:
     - Nếu đã có MSSV → trả về dòng đó (tránh trùng).
@@ -348,7 +327,7 @@ def open_likert_response_ws_for_class(class_code: str):
         ws = sh.add_worksheet(title=name, rows=2000, cols=80)
     base = ["TT","MSSV","Họ và Tên","NTNS","Tổ"]
     qcols = [str(i) for i in range(1,37)]
-    tail  = ["submitted_at","quiz_id","class","submission_id"]
+    tail = ["submitted_at","quiz_id","class","submission_id"]
     _ensure_header(ws, base, qcols+tail)
     return ws
 
@@ -362,7 +341,7 @@ def open_mcq_response_ws_for_class(class_code: str, n_questions: int):
         ws = sh.add_worksheet(title=name, rows=2000, cols=200)
     base = ["TT","MSSV","Họ và Tên","NTNS","Tổ"]
     qcols = [str(i) for i in range(1, n_questions+1)]
-    tail  = ["score","submitted_at","quiz_id","class","submission_id"]
+    tail = ["score","submitted_at","quiz_id","class","submission_id"]
     _ensure_header(ws, base, qcols+tail)
     return ws
 
@@ -590,40 +569,42 @@ def do_submit_likert(df_questions: pd.DataFrame):
     else:
         qindices = list(range(1,37))
     ans_map = {int(q): answers.get(int(q), "") for q in qindices}
-        try:
-            ws = open_likert_response_ws_for_class(class_code)
-            header = ws.row_values(1)
 
-            if attempt_exists_fast(ws, mssv):
-                st.error("Bạn đã nộp bài Likert trước đó."); return
+    try:
+        ws = open_likert_response_ws_for_class(class_code)
+        header = ws.row_values(1)
 
-            info = load_whitelist_students_by_class(class_code).get(mssv, {})
-            now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        if attempt_exists_fast(ws, mssv):
+            st.error("Bạn đã nộp bài Likert trước đó."); return
 
-            sub_id = hashlib.sha256(
-                f"likert|{QUIZ_ID}|{class_code}|{mssv}|{json.dumps(ans_map, sort_keys=True)}".encode("utf-8")
-            ).hexdigest()[:16]
+        rows = ws.get_all_values()[1:]
+        target_row = _find_row_for_write(header, rows, mssv)
 
-            payload = {
-                "TT": "",
-                "MSSV": mssv,
-                "Họ và Tên": hoten,
-                "NTNS": info.get("dob",""),
-                "Tổ":  info.get("to",""),
-                "submitted_at": now_iso,
-                "quiz_id": QUIZ_ID,
-                "class": class_code,
-                "submission_id": sub_id,
-            }
-            for i in range(1, 37):
-                if str(i) in header:
-                    payload[str(i)] = ans_map.get(i, "")
+        # Ghi thông tin định danh
+        for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+            if col_name in header:
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
 
-            _append_payload_retry(ws, header, payload)
+        info = load_whitelist_students_by_class(class_code).get(mssv, {})
+        for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+            if col_name in header and info.get(key, ""):
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
 
-        except Exception as e:
-            st.error(f"Lỗi ghi Likert: {e}"); return
-
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        updates = []
+        for i in range(1,37):
+            if str(i) in header:
+                cidx = header.index(str(i))+1
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[ans_map.get(i,"")]]})
+        for col_name, value in {"submitted_at": now_iso, "quiz_id": QUIZ_ID, "class": class_code}.items():
+            if col_name in header:
+                cidx = header.index(col_name)+1
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[value]]})
+        if updates: ws.batch_update(updates)
+    except Exception as e:
+        st.error(f"Lỗi ghi Likert: {e}"); return
 
     st.success("✅ Đã nộp bài Likert!")
     for k in ["likert_started","likert_start_time","sv_answers","sv_order","sv_cursor","likert_precheck_done"]:
@@ -649,36 +630,45 @@ def render_timer_mcq():
 def upsert_mcq_response(mssv, hoten, answers, total_correct, n_questions):
     class_code = st.session_state.get("sv_class","").strip()
     ws = open_mcq_response_ws_for_class(class_code, n_questions)
-        header = ws.row_values(1)
+    header = ws.row_values(1)
+    updates = []
 
     if attempt_exists_fast(ws, mssv):
         st.error("Bạn đã nộp MCQ trước đó."); return
 
+    rows = ws.get_all_values()[1:]
+    target_row = _find_row_for_write(header, rows, mssv)
+
+    # Ghi định danh
+    for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+        if col_name in header:
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
+
     info = load_whitelist_students_by_class(class_code).get(mssv, {})
-    now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+    for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+        if col_name in header and info.get(key, ""):
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
 
-    sub_id = hashlib.sha256(
-        f"mcq|{QUIZ_ID}|{class_code}|{mssv}|{json.dumps(answers, sort_keys=True)}".encode("utf-8")
-    ).hexdigest()[:16]
-
-    payload = {
-        "TT": "",
-        "MSSV": mssv,
-        "Họ và Tên": hoten,
-        "NTNS": info.get("dob",""),
-        "Tổ":  info.get("to",""),
-        "score": total_correct,
-        "submitted_at": now_iso,
-        "quiz_id": QUIZ_ID,
-        "class": class_code,
-        "submission_id": sub_id,
-    }
+    # Đáp án + meta
+    updates = []
     for q in range(1, n_questions+1):
         if str(q) in header:
-            payload[str(q)] = answers.get(q, "")
-
-    _append_payload_retry(ws, header, payload)
-
+            cidx = header.index(str(q))+1
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[answers.get(q,"")]]})
+    for col_name, value in {
+        "score": total_correct,
+        "submitted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "quiz_id": QUIZ_ID,
+        "class": class_code
+    }.items():
+        if col_name in header:
+            cidx = header.index(col_name)+1
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[value]]})
+    if updates: ws.batch_update(updates)
 
 def mcq_exam():
     if not st.session_state.get("sv_allow"): st.info("Bạn chưa đăng nhập."); return
@@ -1118,6 +1108,33 @@ else:
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
+
+st.markdown("---")
+st.markdown("© Bản quyền thuộc về .....")
+
+
+# === Append helpers ===
+import time
+
+def _build_row_from_payload(header, payload: dict):
+    return [payload.get(col, "") for col in header]
+
+def _append_row_retry(ws, row_values, max_attempts: int = 5):
+    delay = 0.5
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            ws.append_row(row_values, value_input_option="RAW", table_range="A1")
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(min(delay, 8.0))
+            delay *= 2
+    raise last_err
+
+def _append_payload_retry(ws, header, payload: dict, max_attempts: int = 5):
+    row = _build_row_from_payload(header, payload)
+    _append_row_retry(ws, row, max_attempts=max_attempts)
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
