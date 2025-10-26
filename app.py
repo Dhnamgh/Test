@@ -20,6 +20,30 @@ def _get_student_gate_secret():
     # Flat keys
     candidates = [
         "STUDENT_PASSWORD", "Student_password", "Student_pasword",
+        "STUDENT_PASS", "SV_PASSWORD",
+    ]
+    for k in candidates:
+        if k in st.secrets:
+            v = _norm(st.secrets[k])
+            if v:
+                return v
+
+    # Sectioned keys: [app], [student], [auth], [passwords]
+    sections = ["app", "student", "auth", "passwords"]
+    subkeys  = ["STUDENT_PASSWORD", "Student_password", "Student_pasword", "SV_PASSWORD"]
+    for sec in sections:
+        if sec in st.secrets:
+            d = st.secrets[sec]
+            for k in subkeys:
+                if k in d:
+                    v = _norm(d[k])
+                    if v:
+                        return v
+    return ""
+
+    # Flat keys
+    candidates = [
+        "STUDENT_PASSWORD", "Student_password", "Student_pasword",
         "STUDENT_PASS", "SV_PASSWORD", "SV_PASS"
     ]
 
@@ -41,13 +65,11 @@ def _get_student_gate_secret():
             return _norm(sect_obj.get(key))
 
     return ""
-
 def student_gate_row(label_text: str = "Đăng nhập") -> bool:
     """
     Render a header and a password field on the same row.
-    ALWAYS shows the field so the teacher can see/enter when needed.
-    If a secret is configured (non-empty), requires exact match.
-    If no secret configured, access is allowed but we show a subtle hint.
+    Always shows the field. If a secret is configured (non-empty), requires exact match.
+    If no secret configured, allow silently (no info to students).
     """
     secret = _get_student_gate_secret()
 
@@ -58,34 +80,14 @@ def student_gate_row(label_text: str = "Đăng nhập") -> bool:
         pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
                            type="password", key="sv_gate_pw")
 
-    if secret:
-        ok = (pw.strip() == secret)
-        if not ok and pw:
-            st.error("Mật khẩu không đúng.")
-        return ok
-    else:
-        # No secret configured: allow, but inform teacher (info not error)
-        
+    # No secret configured -> allow silently
+    if not secret:
         return True
-# === End Student gate ===
-import pandas as pd
-import numpy as np
-import gspread
-from google.oauth2.service_account import Credentials
 
-# Plotly (ưu tiên) → nếu thiếu dùng Altair
-try:
-    import plotly.express as px
-    HAS_PLOTLY = True
-except Exception:
-    HAS_PLOTLY = False
-    import altair as alt
-
-st.set_page_config(page_title="Hệ thống trắc nghiệm trực tuyến", layout="wide")
-
-# =========================
-# UTILS: Secrets helpers
-# =========================
+    ok = (pw.strip() == secret)
+    if not ok and pw:
+        st.error("Mật khẩu không đúng.")
+    return ok
 def sget(key, default=None):
     """Đọc từ root secrets → nếu không có thì đọc [app]."""
     if key in st.secrets:
