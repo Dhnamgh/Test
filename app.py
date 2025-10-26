@@ -65,7 +65,7 @@ def student_gate_row(label_text: str = "Đăng nhập") -> bool:
         return ok
     else:
         # No secret configured: allow, but inform teacher (info not error)
-        st.info("Chưa cấu hình STUDENT_PASSWORD trong Secrets → phần Sinh viên đang mở tự do.")
+        
         return True
 # === End Student gate ===
 import pandas as pd
