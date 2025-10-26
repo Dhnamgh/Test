@@ -1109,9 +1109,6 @@ else:
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
 
-st.markdown("---")
-st.markdown("© Bản quyền thuộc về .....")
-
 
 # === Append helpers ===
 import time
