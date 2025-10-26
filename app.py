@@ -7,17 +7,38 @@ from datetime import datetime
 
 import streamlit as st
 
-def student_gate_row(label_text: str = "Đăng nhập") -> str:
-    """Vẽ tiêu đề và ô mật khẩu trên cùng một hàng, trả về mật khẩu người dùng nhập."""
-    c1, c2 = st.columns([0.6, 0.4])
+
+# === Student gate: optional password for Student tab ===
+def _get_student_gate_secret():
+    # Try multiple keys for robustness: STUDENT_PASSWORD (preferred), Student_password, Student_pasword (legacy)
+    def _norm(s):
+        return str(s).strip()
+    sp = st.secrets.get("STUDENT_PASSWORD", None)
+    if sp is None:
+        sp = st.secrets.get("Student_password", None)
+    if sp is None:
+        sp = st.secrets.get("Student_pasword", None)  # legacy typo safeguard
+    return _norm(sp) if sp is not None else ""
+
+def student_gate_row(label_text="Đăng nhập"):
+    # Renders a header + password input on same row
+    # Returns True if either no secret set OR input matches secret; else False.
+    secret = _get_student_gate_secret()
+    if not secret:
+        # No gate configured -> always allowed
+        st.subheader(label_text)
+        return True
+
+    c1, c2 = st.columns([0.5, 0.5])
     with c1:
         st.subheader(label_text)
     with c2:
-        pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
-                           type="password", key="sv_gate_pw")
-    return pw
-
-
+        pw = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="sv_gate_pw")
+    ok = (pw.strip() == secret)
+    if not ok and pw:
+        st.error("Mật khẩu không đúng.")
+    return ok
+# === End Student gate ===
 import pandas as pd
 import numpy as np
 import gspread
@@ -385,27 +406,12 @@ def student_gate() -> bool:
     if st.session_state.get("sv_allow"):
         return True
 
-    st.subheader("Đăng nhập Sinh viên")
+    allowed_student_gate = student_gate_row("Đăng nhập")
+if not allowed_student_gate:
+    st.info("Vui lòng nhập mật khẩu để vào trang Sinh viên.");
+    st.stop()
     with st.form("sv_login_unified"):
         options = get_class_rosters()
-    # ==== BẮT BUỘC MẬT KHẨU TRƯỚC KHI HIỆN FORM SV ====
-    entered_pw = student_gate_row("Đăng nhập")
-    try:
-        secret = _get_student_gate_secret().strip()
-    except Exception:
-        secret = ""
-
-    # BẮT BUỘC: phải có mật khẩu trong Secrets và phải nhập ĐÚNG thì mới cho hiện form
-    if not secret:
-        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
-        return False
-
-    if (entered_pw or st.session_state.get("sv_gate_pw", "")).strip() != secret:
-        if entered_pw:  # chỉ hiện cảnh báo khi người dùng đã gõ gì đó
-            st.warning("Vui lòng nhập đúng mật khẩu để tiếp tục.")
-        return False
-    # ==== HẾT BẮT BUỘC ====
-
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
         mssv = st.text_input("MSSV", placeholder="VD: 511256000").strip()
         hoten_input = st.text_input(
@@ -454,7 +460,8 @@ def student_gate() -> bool:
 
 # =========================
 # LIKERT EXAM
-# =========================def start_likert_exam(n_questions: int):
+# =========================
+def start_likert_exam(n_questions: int):
     mssv  = st.session_state.get("sv_mssv","")
     hoten = st.session_state.get("sv_hoten","")
     st.session_state["likert_started"] = True
@@ -1094,7 +1101,5 @@ else:
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
 
-
-
 st.markdown("---")
-st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
+st.markdown("© Bản quyền thuộc về TS...")
