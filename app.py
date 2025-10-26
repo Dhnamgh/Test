@@ -10,13 +10,6 @@ import pandas as pd
 import numpy as np
 import gspread
 from google.oauth2.service_account import Credentials
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from googleapiclient.errors import HttpError
-from typing import Dict, Any
-import json
-import hashlib
-import hmac
-
 
 # Plotly (ưu tiên) → nếu thiếu dùng Altair
 try:
@@ -54,6 +47,27 @@ def _normalize_credential(s: str) -> str:
         s = s.replace(z, "")
     s = s.replace("\xa0", " ")
     return s.strip()
+
+def _get_student_password() -> str:
+    """Tìm mật khẩu SV ở nhiều khóa/section; trả về chuỗi đã trim (có thể rỗng)."""
+    import streamlit as st
+    def norm(v): return "" if v is None else str(v).strip()
+
+    # Khóa phẳng (root)
+    for k in ["STUDENT_PASSWORD", "Student_password", "Student_pasword"]:
+        if k in st.secrets:
+            v = norm(st.secrets[k])
+            if v: return v
+
+    # Bên trong section phổ biến
+    for sec in ["student", "app", "auth", "passwords"]:
+        if sec in st.secrets:
+            d = st.secrets[sec]
+            for k in ["STUDENT_PASSWORD", "Student_password", "Student_pasword"]:
+                if k in d:
+                    v = norm(d[k])
+                    if v: return v
+    return ""
 
 # =========================
 # CHUẨN HÓA HỌ TÊN
@@ -327,7 +341,7 @@ def open_mcq_response_ws_for_class(class_code: str, n_questions: int):
         ws = sh.add_worksheet(title=name, rows=2000, cols=200)
     base = ["TT","MSSV","Họ và Tên","NTNS","Tổ"]
     qcols = [str(i) for i in range(1, n_questions+1)]
-    tail  = ["score","submitted_at","quiz_id","class", "submission_id"]
+    tail  = ["score","submitted_at","quiz_id","class"]
     _ensure_header(ws, base, qcols+tail)
     return ws
 
@@ -382,7 +396,28 @@ def student_gate() -> bool:
     if st.session_state.get("sv_allow"):
         return True
 
-    st.subheader("Đăng nhập Sinh viên")
+    # --- Tiêu đề + ô mật khẩu cùng hàng ---
+    c1, c2 = st.columns([0.6, 0.4])
+    with c1:
+        st.subheader("Đăng nhập Sinh viên")
+    with c2:
+        sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
+                              type="password", key="sv_gate_pw")
+
+    # --- BẮT BUỘC: có secret và nhập ĐÚNG mới cho hiện form bên dưới ---
+    sv_secret = _get_student_password()
+    if not sv_secret:
+        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
+        return False
+
+    if not sv_pw:
+        return False
+
+    if sv_pw.strip() != sv_secret:
+        st.error("Mật khẩu không đúng.")
+        return False
+
+    # --- Qua đây mới render form SV (Lớp / MSSV / Họ tên ...) ---
     with st.form("sv_login_unified"):
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
@@ -392,6 +427,9 @@ def student_gate() -> bool:
         ).strip()
         agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
         submitted = st.form_submit_button("🔑 Đăng nhập")
+
+    # (Giữ nguyên các đoạn xử lý phía dưới của bạn)
+
 
     if not submitted:
         return False
@@ -516,46 +554,65 @@ def likert36_exam():
     with c3:
         if st.button("📝 Nộp bài Likert", use_container_width=True):
             do_submit_likert(df)
-def do_submit_likert(df_questions: "pd.DataFrame"):
-    mssv  = st.session_state.get("sv_mssv", "").strip()
-    hoten = st.session_state.get("sv_hoten", "").strip()
-    class_code = st.session_state.get("sv_class", "").strip() or st.session_state.get("sv_lop", "").strip()
+
+def do_submit_likert(df_questions: pd.DataFrame):
+    mssv = st.session_state.get("sv_mssv","").strip()
+    hoten = st.session_state.get("sv_hoten","").strip()
+    class_code = st.session_state.get("sv_class","").strip()
+    answers = st.session_state.get("sv_answers", {})
+
     if not (mssv and hoten and class_code):
-        st.error("Thiếu thông tin sinh viên.")
-        return
+        st.error("Thiếu thông tin đăng nhập."); return
 
-    ans_map = st.session_state.get("likert_answers", {}) or {}
-    n_questions = len(df_questions)
-
-    gc = get_gspread_client()
-    sh = gc.open_by_key(st.secrets["RESPONSES_SPREADSHEET_ID"])
-    ws = sh.worksheet(st.secrets.get("LIKERT_SHEET", "Likert_Responses"))
-
-    base_cols = ["submission_id", "submitted_at", "quiz_id", "class", "MSSV", "Họ và Tên"]
-    q_cols = [str(i) for i in range(1, n_questions + 1)]
-    header = _ensure_header(ws, base_cols + q_cols)
-
-    submission_id = _idempotency_key("likert", QUIZ_ID, class_code, mssv, json.dumps(ans_map, sort_keys=True))
-    now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
-
-    payload = {
-        "submission_id": submission_id,
-        "submitted_at": now_iso,
-        "quiz_id": QUIZ_ID,
-        "class": class_code,
-        "MSSV": mssv,
-        "Họ và Tên": hoten,
-    }
-    for i in range(1, n_questions + 1):
-        payload[str(i)] = ans_map.get(i, "")
+    if "q_index" in df_questions.columns:
+        qindices = sorted(df_questions["q_index"].astype(int).tolist())
+    else:
+        qindices = list(range(1,37))
+    ans_map = {int(q): answers.get(int(q), "") for q in qindices}
 
     try:
-        _append_payload(ws, header, payload)
-        st.success("✅ Nộp bài Likert thành công!")
-        st.session_state["likert_submitted"] = True
-    except HttpError:
-        st.error("Hệ thống đang đông. Vui lòng thử lại sau ít phút.")
-        st.stop()
+        ws = open_likert_response_ws_for_class(class_code)
+        header = ws.row_values(1)
+
+        if attempt_exists_fast(ws, mssv):
+            st.error("Bạn đã nộp bài Likert trước đó."); return
+
+        rows = ws.get_all_values()[1:]
+        target_row = _find_row_for_write(header, rows, mssv)
+
+        # Ghi thông tin định danh
+        for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+            if col_name in header:
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
+
+        info = load_whitelist_students_by_class(class_code).get(mssv, {})
+        for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+            if col_name in header and info.get(key, ""):
+                cidx = header.index(col_name)+1
+                ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
+
+        now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+        updates = []
+        for i in range(1,37):
+            if str(i) in header:
+                cidx = header.index(str(i))+1
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[ans_map.get(i,"")]]})
+        for col_name, value in {"submitted_at": now_iso, "quiz_id": QUIZ_ID, "class": class_code}.items():
+            if col_name in header:
+                cidx = header.index(col_name)+1
+                updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}", "values": [[value]]})
+        if updates: ws.batch_update(updates)
+    except Exception as e:
+        st.error(f"Lỗi ghi Likert: {e}"); return
+
+    st.success("✅ Đã nộp bài Likert!")
+    for k in ["likert_started","likert_start_time","sv_answers","sv_order","sv_cursor","likert_precheck_done"]:
+        st.session_state.pop(k, None)
+
+# =========================
+# MCQ EXAM
+# =========================
 def start_mcq_exam():
     st.session_state.update({"mcq_started": True, "mcq_start_time": time.time(), "mcq_cursor": 0, "mcq_answers": {}})
 
@@ -569,43 +626,49 @@ def render_timer_mcq():
     rem = remaining_seconds_mcq()
     mins, secs = divmod(rem, 60)
     st.markdown(f"⏳ **Thời gian còn lại (MCQ):** {mins:02d}:{secs:02d}")
+
 def upsert_mcq_response(mssv, hoten, answers, total_correct, n_questions):
-    """Append-only MCQ với retry/backoff + idempotency; cho phép nộp lại."""
     class_code = st.session_state.get("sv_class","").strip()
     ws = open_mcq_response_ws_for_class(class_code, n_questions)
     header = ws.row_values(1)
+    updates = []
 
-    # Lấy NTNS/Tổ từ roster (nếu có)
-    info = load_whitelist_students_by_class(class_code).get(mssv, {}) if class_code else {}
-    dob = info.get("dob", "")
-    to  = info.get("to", "")
+    if attempt_exists_fast(ws, mssv):
+        st.error("Bạn đã nộp MCQ trước đó."); return
 
-    now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
-    payload = {
-        "TT": "",
-        "MSSV": mssv,
-        "Họ và Tên": hoten,
-        "NTNS": dob,
-        "Tổ": to,
-        "score": total_correct,
-        "submitted_at": now_iso,
-        "quiz_id": QUIZ_ID,
-        "class": class_code,
-    }
+    rows = ws.get_all_values()[1:]
+    target_row = _find_row_for_write(header, rows, mssv)
+
+    # Ghi định danh
+    for col_name, value in {"MSSV": mssv, "Họ và Tên": hoten, "class": class_code}.items():
+        if col_name in header:
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", value)
+
+    info = load_whitelist_students_by_class(class_code).get(mssv, {})
+    for col_name, key in {"NTNS":"dob","Tổ":"to"}.items():
+        if col_name in header and info.get(key, ""):
+            cidx = header.index(col_name)+1
+            ws.update_acell(f"{_col_idx_to_letter(cidx)}{target_row}", info[key])
+
+    # Đáp án + meta
+    updates = []
     for q in range(1, n_questions+1):
-        payload[str(q)] = answers.get(q, answers.get(str(q), ""))
-
-    # Idempotency key
-    import json as _json, hashlib as _hashlib
-    payload["submission_id"] = _hashlib.sha256(("mcq|%s|%s|%s|%s" % (
-        QUIZ_ID, class_code, mssv, _json.dumps(answers, sort_keys=True)
-    )).encode()).hexdigest()[:16]
-
-    # Append (retry/backoff nằm trong _append_payload)
-    _append_payload(ws, header, payload)
-    st.success("✅ Nộp MCQ thành công!")
-
-
+        if str(q) in header:
+            cidx = header.index(str(q))+1
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[answers.get(q,"")]]})
+    for col_name, value in {
+        "score": total_correct,
+        "submitted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "quiz_id": QUIZ_ID,
+        "class": class_code
+    }.items():
+        if col_name in header:
+            cidx = header.index(col_name)+1
+            updates.append({"range": f"{_col_idx_to_letter(cidx)}{target_row}",
+                            "values": [[value]]})
+    if updates: ws.batch_update(updates)
 
 def mcq_exam():
     if not st.session_state.get("sv_allow"): st.info("Bạn chưa đăng nhập."); return
@@ -1045,9 +1108,6 @@ else:
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
-
-st.markdown("---")
-st.markdown("© Bản quyền thuộc về TS...")
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
