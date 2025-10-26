@@ -6,6 +6,39 @@ import re, time, hashlib, unicodedata
 from datetime import datetime
 
 import streamlit as st
+
+
+# === Student gate: optional password for Student tab ===
+def _get_student_gate_secret():
+    # Try multiple keys for robustness: STUDENT_PASSWORD (preferred), Student_password, Student_pasword (legacy)
+    def _norm(s):
+        return str(s).strip()
+    sp = st.secrets.get("STUDENT_PASSWORD", None)
+    if sp is None:
+        sp = st.secrets.get("Student_password", None)
+    if sp is None:
+        sp = st.secrets.get("Student_pasword", None)  # legacy typo safeguard
+    return _norm(sp) if sp is not None else ""
+
+def student_gate_row(label_text="Đăng nhập"):
+    # Renders a header + password input on same row
+    # Returns True if either no secret set OR input matches secret; else False.
+    secret = _get_student_gate_secret()
+    if not secret:
+        # No gate configured -> always allowed
+        st.subheader(label_text)
+        return True
+
+    c1, c2 = st.columns([0.5, 0.5])
+    with c1:
+        st.subheader(label_text)
+    with c2:
+        pw = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="sv_gate_pw")
+    ok = (pw.strip() == secret)
+    if not ok and pw:
+        st.error("Mật khẩu không đúng.")
+    return ok
+# === End Student gate ===
 import pandas as pd
 import numpy as np
 import gspread
@@ -96,7 +129,6 @@ def render_banner():
 # =========================
 # GOOGLE SHEETS HELPERS
 # =========================
-@st.cache_resource
 def get_gspread_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets",
               "https://www.googleapis.com/auth/drive"]
@@ -231,7 +263,6 @@ def is_roster_sheet_name(title: str) -> bool:
     if not re.search(r"[A-Za-z]", t) or not re.search(r"\d", t): return False
     return True
 
-@st.cache_data(ttl=300)
 def get_class_rosters():
     s = sget("CLASS_ROSTERS", "")
     if s:
@@ -375,7 +406,10 @@ def student_gate() -> bool:
     if st.session_state.get("sv_allow"):
         return True
 
-    st.subheader("Đăng nhập Sinh viên")
+    allowed_student_gate = student_gate_row("Đăng nhập")
+if not allowed_student_gate:
+    st.info("Vui lòng nhập mật khẩu để vào trang Sinh viên.");
+    st.stop()
     with st.form("sv_login_unified"):
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
@@ -586,7 +620,6 @@ def upsert_mcq_response(mssv, hoten, answers, total_correct, n_questions):
     class_code = st.session_state.get("sv_class","").strip()
     ws = open_mcq_response_ws_for_class(class_code, n_questions)
     header = ws.row_values(1)
-    updates = []
 
     if attempt_exists_fast(ws, mssv):
         st.error("Bạn đã nộp MCQ trước đó."); return
@@ -731,7 +764,6 @@ def _get_teacher_creds_strict():
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
 
-    # Nếu đã đăng nhập
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
         if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
@@ -739,27 +771,32 @@ def teacher_login() -> bool:
             st.success("Đã đăng xuất."); st.rerun()
         return True
 
-    # Username mặc định trong secrets; chỉ yêu cầu mật khẩu
-    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_only")
+    u_val = st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user_simple")
+    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_simple")
 
     if st.button("Đăng nhập", type="primary", key="gv_login_btn_simple"):
+        u_in = _normalize_credential(u_val)
         p_in = _normalize_credential(p_val)
-        if not p_in:
-            st.error("Vui lòng nhập mật khẩu."); return False
 
-        # Lấy user/pass chuẩn từ secrets
+        if not u_in:
+            st.error("Vui lòng nhập Tài khoản.")
+            return False
+
         u_sec, p_sec = _get_teacher_creds_strict()
-        if p_in == _normalize_credential(p_sec):
+        if u_in == u_sec and p_in == p_sec:
             st.session_state["is_teacher"] = True
-            # Dọn state cũ (nếu có)
-            for k in ("gv_pass", "gv_pass_simple", "gv_pass_only"):
+            for k in ("gv_user", "gv_pass", "gv_user_simple", "gv_pass_simple"):
                 st.session_state.pop(k, None)
-            st.success("Đăng nhập thành công."); st.rerun()
+            st.success("Đăng nhập thành công.")
+            st.rerun()
         else:
-            st.error("Sai mật khẩu.")
+            st.error("Sai tài khoản hoặc mật khẩu.")
             with st.expander("🔧 Chẩn đoán đăng nhập (không lộ mật khẩu)"):
                 st.write({
+                    "secrets_loaded_from": "[app]" if ("app" in st.secrets and ("TEACHER_USER" in st.secrets["app"] or "TEACHER_PASS" in st.secrets["app"])) else "root",
+                    "expected_user(masked)": (u_sec[:1] + "•"*(max(0,len(u_sec)-2)) + u_sec[-1:]),
                     "expected_pass_length": len(p_sec),
+                    "input_user": u_in,
                     "input_pass_length": len(p_in),
                 })
     return False
