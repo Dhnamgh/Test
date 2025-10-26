@@ -2,93 +2,40 @@
 # =========================
 # IMPORTS & PAGE CONFIG
 # =========================
-from __future__ import annotations
 import re, time, hashlib, unicodedata
 from datetime import datetime
 
 import streamlit as st
 
-
-# === Student gate: optional password for Student tab (always renders field) ===
-def _get_student_gate_secret():
-    """
-    Try a broad set of secret keys and nested sections to find the student password.
-    Returns trimmed string (may be empty if not configured).
-    """
-    def _norm(v):
-        return "" if v is None else str(v).strip()
-
-    # Flat keys
-    candidates = [
-        "STUDENT_PASSWORD", "Student_password", "Student_pasword",
-        "STUDENT_PASS", "SV_PASSWORD",
-    ]
-    for k in candidates:
-        if k in st.secrets:
-            v = _norm(st.secrets[k])
-            if v:
-                return v
-
-    # Sectioned keys: [app], [student], [auth], [passwords]
-    sections = ["app", "student", "auth", "passwords"]
-    subkeys  = ["STUDENT_PASSWORD", "Student_password", "Student_pasword", "SV_PASSWORD"]
-    for sec in sections:
-        if sec in st.secrets:
-            d = st.secrets[sec]
-            for k in subkeys:
-                if k in d:
-                    v = _norm(d[k])
-                    if v:
-                        return v
-    return ""
-
-    # Flat keys
-    candidates = [
-        "STUDENT_PASSWORD", "Student_password", "Student_pasword",
-        "STUDENT_PASS", "SV_PASSWORD", "SV_PASS"
-    ]
-
-    # Nested sections and keys
-    nested_candidates = [
-        ("auth", "STUDENT_PASSWORD"), ("auth", "student_password"), ("auth", "sv_password"),
-        ("student", "password"), ("sv", "password")
-    ]
-
-    # 1) flat
-    for k in candidates:
-        if k in st.secrets:
-            return _norm(st.secrets.get(k))
-
-    # 2) nested (dict-like)
-    for sect, key in nested_candidates:
-        sect_obj = st.secrets.get(sect)
-        if isinstance(sect_obj, dict) and key in sect_obj:
-            return _norm(sect_obj.get(key))
-
-    return ""
-def student_gate_row(label_text: str = "Đăng nhập") -> bool:
-    """
-    Render a header and a password field on the same row.
-    Always shows the field. If a secret is configured (non-empty), requires exact match.
-    If no secret configured, allow silently (no info to students).
-    """
-    secret = _get_student_gate_secret()
-
+def student_gate_row(label_text: str = "Đăng nhập") -> str:
+    """Vẽ tiêu đề và ô mật khẩu trên cùng một hàng, trả về mật khẩu người dùng nhập."""
     c1, c2 = st.columns([0.6, 0.4])
     with c1:
         st.subheader(label_text)
     with c2:
         pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
                            type="password", key="sv_gate_pw")
+    return pw
 
-    # No secret configured -> allow silently
-    if not secret:
-        return True
 
-    ok = (pw.strip() == secret)
-    if not ok and pw:
-        st.error("Mật khẩu không đúng.")
-    return ok
+import pandas as pd
+import numpy as np
+import gspread
+from google.oauth2.service_account import Credentials
+
+# Plotly (ưu tiên) → nếu thiếu dùng Altair
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except Exception:
+    HAS_PLOTLY = False
+    import altair as alt
+
+st.set_page_config(page_title="Hệ thống trắc nghiệm trực tuyến", layout="wide")
+
+# =========================
+# UTILS: Secrets helpers
+# =========================
 def sget(key, default=None):
     """Đọc từ root secrets → nếu không có thì đọc [app]."""
     if key in st.secrets:
@@ -428,74 +375,86 @@ def init_exam_state():
     st.session_state.setdefault("mcq_answers", {})
 
 def student_gate() -> bool:
-        """
-        Đăng nhập SV:
-        - Chọn lớp (từ roster gốc)
-        - Nhập MSSV, Họ & Tên (tự chuẩn hóa)
-        - Kiểm tra MSSV tồn tại trong lớp; tên lưu theo roster
-        """
-        init_exam_state()
-        if st.session_state.get("sv_allow"):
-            return True
+    """
+    Đăng nhập SV:
+    - Chọn lớp (từ roster gốc)
+    - Nhập MSSV, Họ & Tên (tự chuẩn hóa)
+    - Kiểm tra MSSV tồn tại trong lớp; tên lưu theo roster
+    """
+    init_exam_state()
+    if st.session_state.get("sv_allow"):
+        return True
 
-        allowed_student_gate = student_gate_row("Đăng nhập")
-        if not allowed_student_gate:
-            st.info("Vui lòng nhập mật khẩu để vào trang Sinh viên.")
-            st.stop()
-        with st.form("sv_login_unified"):
-            options = get_class_rosters()
-            class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
-            mssv = st.text_input("MSSV", placeholder="VD: 511256000").strip()
-            hoten_input = st.text_input(
-                "Họ và Tên (Không phân biệt chữ hoa, thường)"
-            ).strip()
-            agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
-            submitted = st.form_submit_button("🔑 Đăng nhập")
+    st.subheader("Đăng nhập Sinh viên")
+    with st.form("sv_login_unified"):
+        options = get_class_rosters()
+    # ==== BẮT BUỘC MẬT KHẨU TRƯỚC KHI HIỆN FORM SV ====
+    entered_pw = student_gate_row("Đăng nhập")
+    try:
+        secret = _get_student_gate_secret().strip()
+    except Exception:
+        secret = ""
 
-        if not submitted:
-            return False
-
-        if not class_code:
-            st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp.")
-            return False
-        if not mssv or not hoten_input:
-            st.error("Vui lòng nhập MSSV và Họ & Tên.")
-            return False
-        if not agree:
-            st.error("Vui lòng tích xác nhận.")
-            return False
-
-        wl = load_whitelist_students_by_class(class_code)  # {mssv: {name, dob, to}}
-        if mssv not in wl:
-            st.error(f"MSSV không nằm trong lớp {class_code}.")
-            return False
-
-        hoten_norm_input = normalize_vietnamese_name(hoten_input)
-        roster_name = normalize_vietnamese_name(wl[mssv].get("name", ""))
-
-        if roster_name and hoten_norm_input and hoten_norm_input != roster_name:
-            st.warning(
-                f"Tên bạn nhập **{hoten_norm_input}** khác với danh sách lớp: **{roster_name}**. "
-                "Hệ thống sẽ dùng tên theo danh sách lớp."
-            )
-
-        st.session_state.update({
-            "sv_class": class_code.strip(),
-            "sv_mssv": mssv.strip(),
-            "sv_hoten": roster_name or hoten_norm_input,
-            "sv_allow": True
-        })
-
-        st.success(f"🎓 Xin chào **{st.session_state['sv_hoten']}** ({mssv}) – Lớp {class_code}")
-        st.rerun()
+    # BẮT BUỘC: phải có mật khẩu trong Secrets và phải nhập ĐÚNG thì mới cho hiện form
+    if not secret:
+        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
         return False
 
-    # =========================
-    # LIKERT EXAM
+    if (entered_pw or st.session_state.get("sv_gate_pw", "")).strip() != secret:
+        if entered_pw:  # chỉ hiện cảnh báo khi người dùng đã gõ gì đó
+            st.warning("Vui lòng nhập đúng mật khẩu để tiếp tục.")
+        return False
+    # ==== HẾT BẮT BUỘC ====
+
+        class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
+        mssv = st.text_input("MSSV", placeholder="VD: 511256000").strip()
+        hoten_input = st.text_input(
+            "Họ và Tên (Không phân biệt chữ hoa, thường)"
+        ).strip()
+        agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
+        submitted = st.form_submit_button("🔑 Đăng nhập")
+
+    if not submitted:
+        return False
+
+    if not class_code:
+        st.error("Chưa có danh sách lớp. Vào tab Giảng viên để tạo lớp.")
+        return False
+    if not mssv or not hoten_input:
+        st.error("Vui lòng nhập MSSV và Họ & Tên.")
+        return False
+    if not agree:
+        st.error("Vui lòng tích xác nhận.")
+        return False
+
+    wl = load_whitelist_students_by_class(class_code)  # {mssv: {name, dob, to}}
+    if mssv not in wl:
+        st.error(f"MSSV không nằm trong lớp {class_code}.")
+        return False
+
+    hoten_norm_input = normalize_vietnamese_name(hoten_input)
+    roster_name = normalize_vietnamese_name(wl[mssv].get("name", ""))
+
+    if roster_name and hoten_norm_input and hoten_norm_input != roster_name:
+        st.warning(
+            f"Tên bạn nhập **{hoten_norm_input}** khác với danh sách lớp: **{roster_name}**. "
+            "Hệ thống sẽ dùng tên theo danh sách lớp."
+        )
+
+    st.session_state.update({
+        "sv_class": class_code.strip(),
+        "sv_mssv": mssv.strip(),
+        "sv_hoten": roster_name or hoten_norm_input,
+        "sv_allow": True
+    })
+
+    st.success(f"🎓 Xin chào **{st.session_state['sv_hoten']}** ({mssv}) – Lớp {class_code}")
+    st.rerun()
+    return False
+
 # =========================
 # LIKERT EXAM
-# =========================
-def start_likert_exam(n_questions: int):
+# =========================def start_likert_exam(n_questions: int):
     mssv  = st.session_state.get("sv_mssv","")
     hoten = st.session_state.get("sv_hoten","")
     st.session_state["likert_started"] = True
@@ -794,34 +753,46 @@ def _get_teacher_creds_strict():
     if not u or not p:
         st.error("❌ Chưa cấu hình TEACHER_USER / TEACHER_PASS trong Secrets."); st.stop()
     return u, p
+
 def teacher_login() -> bool:
     st.subheader("Đăng nhập Giảng viên")
 
-    # Nếu đã đăng nhập rồi
     if st.session_state.get("is_teacher", False):
         st.success("Đã đăng nhập.")
         if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
             st.session_state["is_teacher"] = False
-            st.success("Đã đăng xuất.")
-            st.rerun()
+            st.success("Đã đăng xuất."); st.rerun()
         return True
 
-    # Chỉ yêu cầu mật khẩu (username mặc định trong secrets, không cần nhập)
-    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_only")
+    u_val = st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user_simple")
+    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_simple")
 
-    if st.button("🔐 Đăng nhập GV", key="gv_login_btn_only"):
-        admin_secret = str(st.secrets.get("ADMIN_PASSWORD", "")).strip()
-        if not admin_secret:
-            st.error("Chưa cấu hình ADMIN_PASSWORD trong Secrets.")
+    if st.button("Đăng nhập", type="primary", key="gv_login_btn_simple"):
+        u_in = _normalize_credential(u_val)
+        p_in = _normalize_credential(p_val)
+
+        if not u_in:
+            st.error("Vui lòng nhập Tài khoản.")
             return False
-        if str(p_val).strip() == admin_secret:
+
+        u_sec, p_sec = _get_teacher_creds_strict()
+        if u_in == u_sec and p_in == p_sec:
             st.session_state["is_teacher"] = True
+            for k in ("gv_user", "gv_pass", "gv_user_simple", "gv_pass_simple"):
+                st.session_state.pop(k, None)
             st.success("Đăng nhập thành công.")
             st.rerun()
         else:
-            st.error("Mật khẩu không đúng.")
+            st.error("Sai tài khoản hoặc mật khẩu.")
+            with st.expander("🔧 Chẩn đoán đăng nhập (không lộ mật khẩu)"):
+                st.write({
+                    "secrets_loaded_from": "[app]" if ("app" in st.secrets and ("TEACHER_USER" in st.secrets["app"] or "TEACHER_PASS" in st.secrets["app"])) else "root",
+                    "expected_user(masked)": (u_sec[:1] + "•"*(max(0,len(u_sec)-2)) + u_sec[-1:]),
+                    "expected_pass_length": len(p_sec),
+                    "input_user": u_in,
+                    "input_pass_length": len(p_in),
+                })
     return False
-
 
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question")
@@ -1122,6 +1093,7 @@ else:
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
+
 
 
 st.markdown("---")
