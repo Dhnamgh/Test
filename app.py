@@ -8,37 +8,65 @@ from datetime import datetime
 import streamlit as st
 
 
-# === Student gate: optional password for Student tab ===
+# === Student gate: optional password for Student tab (always renders field) ===
 def _get_student_gate_secret():
-    # Prefer STUDENT_PASSWORD; accept legacy keys for compatibility
-    def _norm(s):
-        return str(s).strip()
-    sp = st.secrets.get("STUDENT_PASSWORD", None)
-    if sp is None:
-        sp = st.secrets.get("Student_password", None)
-    if sp is None:
-        sp = st.secrets.get("Student_pasword", None)  # legacy typo safeguard
-    return _norm(sp) if sp is not None else ""
+    """
+    Try a broad set of secret keys and nested sections to find the student password.
+    Returns trimmed string (may be empty if not configured).
+    """
+    def _norm(v):
+        return "" if v is None else str(v).strip()
 
-def student_gate_row(label_text="Đăng nhập"):
-    """Render a header and a password field on the same row.
-    Returns True if gate is open (no secret set or password matches), else False.
+    # Flat keys
+    candidates = [
+        "STUDENT_PASSWORD", "Student_password", "Student_pasword",
+        "STUDENT_PASS", "SV_PASSWORD", "SV_PASS"
+    ]
+
+    # Nested sections and keys
+    nested_candidates = [
+        ("auth", "STUDENT_PASSWORD"), ("auth", "student_password"), ("auth", "sv_password"),
+        ("student", "password"), ("sv", "password")
+    ]
+
+    # 1) flat
+    for k in candidates:
+        if k in st.secrets:
+            return _norm(st.secrets.get(k))
+
+    # 2) nested (dict-like)
+    for sect, key in nested_candidates:
+        sect_obj = st.secrets.get(sect)
+        if isinstance(sect_obj, dict) and key in sect_obj:
+            return _norm(sect_obj.get(key))
+
+    return ""
+
+def student_gate_row(label_text: str = "Đăng nhập") -> bool:
+    """
+    Render a header and a password field on the same row.
+    ALWAYS shows the field so the teacher can see/enter when needed.
+    If a secret is configured (non-empty), requires exact match.
+    If no secret configured, access is allowed but we show a subtle hint.
     """
     secret = _get_student_gate_secret()
-    if not secret:
-        # No gate configured -> always allowed
-        st.subheader(label_text)
-        return True
 
     c1, c2 = st.columns([0.6, 0.4])
     with c1:
         st.subheader(label_text)
     with c2:
-        pw = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="sv_gate_pw")
-    ok = (pw.strip() == secret)
-    if not ok and pw:
-        st.error("Mật khẩu không đúng.")
-    return ok
+        pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
+                           type="password", key="sv_gate_pw")
+
+    if secret:
+        ok = (pw.strip() == secret)
+        if not ok and pw:
+            st.error("Mật khẩu không đúng.")
+        return ok
+    else:
+        # No secret configured: allow, but inform teacher (info not error)
+        st.info("Chưa cấu hình STUDENT_PASSWORD trong Secrets → phần Sinh viên đang mở tự do.")
+        return True
 # === End Student gate ===
 import pandas as pd
 import numpy as np
