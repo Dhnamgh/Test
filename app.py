@@ -48,6 +48,27 @@ def _normalize_credential(s: str) -> str:
     s = s.replace("\xa0", " ")
     return s.strip()
 
+def _get_student_password() -> str:
+    """Tìm mật khẩu SV ở nhiều khóa/section; trả về chuỗi đã trim (có thể rỗng)."""
+    import streamlit as st
+    def norm(v): return "" if v is None else str(v).strip()
+
+    # Khóa phẳng (root)
+    for k in ["STUDENT_PASSWORD", "Student_password", "Student_pasword"]:
+        if k in st.secrets:
+            v = norm(st.secrets[k])
+            if v: return v
+
+    # Bên trong section phổ biến
+    for sec in ["student", "app", "auth", "passwords"]:
+        if sec in st.secrets:
+            d = st.secrets[sec]
+            for k in ["STUDENT_PASSWORD", "Student_password", "Student_pasword"]:
+                if k in d:
+                    v = norm(d[k])
+                    if v: return v
+    return ""
+
 # =========================
 # CHUẨN HÓA HỌ TÊN
 # =========================
@@ -376,20 +397,30 @@ def student_gate() -> bool:
         return True
 
 
-    c1, c2 = st.columns([0.6, 0.4])
-    with c1:
-        st.subheader("Đăng nhập Sinh viên")
-    with c2:
-        sv_gate_pw = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="sv_gate_pw")
-    _sv_secret = (str(st.secrets.get("STUDENT_PASSWORD", "") or st.secrets.get("Student_password", "") or st.secrets.get("Student_pasword","")).strip())
-    if not _sv_secret:
-        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
-        return False
-    if not sv_gate_pw:
-        return False
-    if sv_gate_pw.strip() != _sv_secret:
-        st.error("Mật khẩu không đúng.")
-        return False
+   # --- Tiêu đề + ô mật khẩu cùng hàng ---
+c1, c2 = st.columns([0.6, 0.4])
+with c1:
+    st.subheader("Đăng nhập Sinh viên")
+with c2:
+    sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
+                          type="password", key="sv_gate_pw")
+
+# --- BẮT BUỘC: có secret và nhập ĐÚNG mới cho hiện form bên dưới ---
+sv_secret = _get_student_password()
+if not sv_secret:
+    # Không có mật khẩu trong Secrets -> không render form
+    st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
+    return False
+
+if not sv_pw:
+    # Chưa gõ mật khẩu -> dừng im lặng (không hiện form)
+    return False
+
+if sv_pw.strip() != sv_secret:
+    st.error("Mật khẩu không đúng.")
+    return False
+# --- Qua đây mới render form SV (Lớp / MSSV / Họ tên ...) ---
+
     with st.form("sv_login_unified"):
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
