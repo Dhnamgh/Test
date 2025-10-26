@@ -398,30 +398,30 @@ def student_gate() -> bool:
 
     # --- Tiêu đề + ô mật khẩu cùng hàng ---
     c1, c2, c3 = st.columns([0.4, 0.4, 0.2])
-with c1:
-    st.subheader("Đăng nhập Sinh viên")
-with c2:
-    sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
-                          type="password", key="sv_gate_pw")
-with c3:
-    login_clicked = st.button("🔑 Đăng nhập")
-
-# --- Kiểm tra mật khẩu ---
-sv_secret = str(st.secrets.get("STUDENT_PASSWORD", "")).strip()
-
-# Bắt buộc có secret để bật tính năng
-if not sv_secret:
-    st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
-    st.stop()
-
-# Nếu chưa nhấn nút thì không hiện form
-if not login_clicked:
-    st.stop()
-
-# Khi bấm nút, kiểm tra mật khẩu
-if sv_pw.strip() != sv_secret:
-    st.error("Mật khẩu không đúng.")
-    st.stop()
+    with c1:
+        st.subheader("Đăng nhập Sinh viên")
+    with c2:
+        sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
+                              type="password", key="sv_gate_pw")
+    with c3:
+        login_clicked = st.button("🔑 Đăng nhập")
+    
+    # --- Kiểm tra mật khẩu ---
+    sv_secret = str(st.secrets.get("STUDENT_PASSWORD", "")).strip()
+    
+    # Bắt buộc có secret để bật tính năng
+    if not sv_secret:
+        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
+        st.stop()
+    
+    # Nếu chưa nhấn nút thì không hiện form
+    if not login_clicked:
+        st.stop()
+    
+    # Khi bấm nút, kiểm tra mật khẩu
+    if sv_pw.strip() != sv_secret:
+        st.error("Mật khẩu không đúng.")
+        st.stop()
 
 # Nếu qua được đây => đăng nhập hợp lệ, hiển thị form nhập Lớp/MSSV/Họ tên
 
