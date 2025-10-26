@@ -375,7 +375,21 @@ def student_gate() -> bool:
     if st.session_state.get("sv_allow"):
         return True
 
-    st.subheader("Đăng nhập Sinh viên")
+
+    c1, c2 = st.columns([0.6, 0.4])
+    with c1:
+        st.subheader("Đăng nhập Sinh viên")
+    with c2:
+        sv_gate_pw = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="sv_gate_pw")
+    _sv_secret = (str(st.secrets.get("STUDENT_PASSWORD", "") or st.secrets.get("Student_password", "") or st.secrets.get("Student_pasword","")).strip())
+    if not _sv_secret:
+        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
+        return False
+    if not sv_gate_pw:
+        return False
+    if sv_gate_pw.strip() != _sv_secret:
+        st.error("Mật khẩu không đúng.")
+        return False
     with st.form("sv_login_unified"):
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
@@ -1063,6 +1077,9 @@ else:
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
+
+st.markdown("---")
+st.markdown("© Bản quyền thuộc về TS...")
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS...")
