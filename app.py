@@ -10,7 +10,7 @@ import streamlit as st
 
 # === Student gate: optional password for Student tab ===
 def _get_student_gate_secret():
-    # Try multiple keys for robustness: STUDENT_PASSWORD (preferred), Student_password, Student_pasword (legacy)
+    # Prefer STUDENT_PASSWORD; accept legacy keys for compatibility
     def _norm(s):
         return str(s).strip()
     sp = st.secrets.get("STUDENT_PASSWORD", None)
@@ -21,15 +21,16 @@ def _get_student_gate_secret():
     return _norm(sp) if sp is not None else ""
 
 def student_gate_row(label_text="Đăng nhập"):
-    # Renders a header + password input on same row
-    # Returns True if either no secret set OR input matches secret; else False.
+    """Render a header and a password field on the same row.
+    Returns True if gate is open (no secret set or password matches), else False.
+    """
     secret = _get_student_gate_secret()
     if not secret:
         # No gate configured -> always allowed
         st.subheader(label_text)
         return True
 
-    c1, c2 = st.columns([0.5, 0.5])
+    c1, c2 = st.columns([0.6, 0.4])
     with c1:
         st.subheader(label_text)
     with c2:
@@ -408,7 +409,7 @@ def student_gate() -> bool:
 
     allowed_student_gate = student_gate_row("Đăng nhập")
 if not allowed_student_gate:
-    st.info("Vui lòng nhập mật khẩu để vào trang Sinh viên.");
+    st.info("Vui lòng nhập mật khẩu để vào trang Sinh viên.")
     st.stop()
     with st.form("sv_login_unified"):
         options = get_class_rosters()
@@ -762,44 +763,33 @@ def _get_teacher_creds_strict():
     return u, p
 
 def teacher_login() -> bool:
-    st.subheader("Đăng nhập Giảng viên")
+    
+st.subheader("Đăng nhập Giảng viên")
 
-    if st.session_state.get("is_teacher", False):
-        st.success("Đã đăng nhập.")
-        if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
-            st.session_state["is_teacher"] = False
-            st.success("Đã đăng xuất."); st.rerun()
-        return True
+# Nếu đã đăng nhập rồi
+if st.session_state.get("is_teacher", False):
+    st.success("Đã đăng nhập.")
+    if st.button("🚪 Đăng xuất GV", type="secondary", key="logout_gv_btn_simple"):
+        st.session_state["is_teacher"] = False
+        st.success("Đã đăng xuất.")
+        st.rerun()
+    return True
 
-    u_val = st.text_input("Tài khoản", value="", placeholder="lecturer", key="gv_user_simple")
-    p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_simple")
+# Chỉ yêu cầu mật khẩu
+p_val = st.text_input("Mật khẩu", value="", placeholder="••••••", type="password", key="gv_pass_only")
 
-    if st.button("Đăng nhập", type="primary", key="gv_login_btn_simple"):
-        u_in = _normalize_credential(u_val)
-        p_in = _normalize_credential(p_val)
-
-        if not u_in:
-            st.error("Vui lòng nhập Tài khoản.")
-            return False
-
-        u_sec, p_sec = _get_teacher_creds_strict()
-        if u_in == u_sec and p_in == p_sec:
-            st.session_state["is_teacher"] = True
-            for k in ("gv_user", "gv_pass", "gv_user_simple", "gv_pass_simple"):
-                st.session_state.pop(k, None)
-            st.success("Đăng nhập thành công.")
-            st.rerun()
-        else:
-            st.error("Sai tài khoản hoặc mật khẩu.")
-            with st.expander("🔧 Chẩn đoán đăng nhập (không lộ mật khẩu)"):
-                st.write({
-                    "secrets_loaded_from": "[app]" if ("app" in st.secrets and ("TEACHER_USER" in st.secrets["app"] or "TEACHER_PASS" in st.secrets["app"])) else "root",
-                    "expected_user(masked)": (u_sec[:1] + "•"*(max(0,len(u_sec)-2)) + u_sec[-1:]),
-                    "expected_pass_length": len(p_sec),
-                    "input_user": u_in,
-                    "input_pass_length": len(p_in),
-                })
-    return False
+if st.button("🔐 Đăng nhập GV", key="gv_login_btn_only"):
+    admin_secret = str(st.secrets.get("ADMIN_PASSWORD", "")).strip()
+    if not admin_secret:
+        st.error("Chưa cấu hình ADMIN_PASSWORD trong Secrets.")
+        return False
+    if str(p_val).strip() == admin_secret:
+        st.session_state["is_teacher"] = True
+        st.success("Đăng nhập thành công.")
+        st.rerun()
+    else:
+        st.error("Mật khẩu không đúng.")
+return False
 
 def _diagnose_questions():
     st.markdown("#### 🔎 Kiểm tra Question")
@@ -1100,6 +1090,7 @@ else:
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
         "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
     )
+
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
