@@ -396,31 +396,28 @@ def student_gate() -> bool:
     if st.session_state.get("sv_allow"):
         return True
 
+    # --- Tiêu đề + ô mật khẩu cùng hàng ---
+    c1, c2 = st.columns([0.6, 0.4])
+    with c1:
+        st.subheader("Đăng nhập Sinh viên")
+    with c2:
+        sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
+                              type="password", key="sv_gate_pw")
 
-   # --- Tiêu đề + ô mật khẩu cùng hàng ---
-c1, c2 = st.columns([0.6, 0.4])
-with c1:
-    st.subheader("Đăng nhập Sinh viên")
-with c2:
-    sv_pw = st.text_input("Mật khẩu", value="", placeholder="••••••",
-                          type="password", key="sv_gate_pw")
+    # --- BẮT BUỘC: có secret và nhập ĐÚNG mới cho hiện form bên dưới ---
+    sv_secret = _get_student_password()
+    if not sv_secret:
+        st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
+        return False
 
-# --- BẮT BUỘC: có secret và nhập ĐÚNG mới cho hiện form bên dưới ---
-sv_secret = _get_student_password()
-if not sv_secret:
-    # Không có mật khẩu trong Secrets -> không render form
-    st.error("Trang Sinh viên đang tạm khóa. Vui lòng liên hệ giảng viên.")
-    return False
+    if not sv_pw:
+        return False
 
-if not sv_pw:
-    # Chưa gõ mật khẩu -> dừng im lặng (không hiện form)
-    return False
+    if sv_pw.strip() != sv_secret:
+        st.error("Mật khẩu không đúng.")
+        return False
 
-if sv_pw.strip() != sv_secret:
-    st.error("Mật khẩu không đúng.")
-    return False
-# --- Qua đây mới render form SV (Lớp / MSSV / Họ tên ...) ---
-
+    # --- Qua đây mới render form SV (Lớp / MSSV / Họ tên ...) ---
     with st.form("sv_login_unified"):
         options = get_class_rosters()
         class_code = st.selectbox("Lớp", options=options, index=0 if options else None)
@@ -430,6 +427,9 @@ if sv_pw.strip() != sv_secret:
         ).strip()
         agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
         submitted = st.form_submit_button("🔑 Đăng nhập")
+
+    # (Giữ nguyên các đoạn xử lý phía dưới của bạn)
+
 
     if not submitted:
         return False
