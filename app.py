@@ -1095,47 +1095,6 @@ if page == "Sinh viên":
     else:
         mcq_exam()
 
-elif page == "Giảng viên":
-    render_banner()
-    teacher_panel()
-
-elif page == "Xem điểm":
-    render_banner()
-    render_xem_diem_page()   # <— gọi trang mới
-
-else:
-    render_banner()
-    st.title("Hướng dẫn nhanh")
-
-    st.markdown(
-        "- **Sinh viên**: đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert** hoặc **MCQ** → Bắt đầu (bắt giờ) → Nộp bài.\n"
-        "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
-        "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
-    )
-
-
-# === Append helpers ===
-import time
-
-def _build_row_from_payload(header, payload: dict):
-    return [payload.get(col, "") for col in header]
-
-def _append_row_retry(ws, row_values, max_attempts: int = 5):
-    delay = 0.5
-    last_err = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            ws.append_row(row_values, value_input_option="RAW", table_range="A1")
-            return
-        except Exception as e:
-            last_err = e
-            time.sleep(min(delay, 8.0))
-            delay *= 2
-    raise last_err
-
-def _append_payload_retry(ws, header, payload: dict, max_attempts: int = 5):
-    row = _build_row_from_payload(header, payload)
-    _append_row_retry(ws, row, max_attempts=max_attempts)
 # =====================[ TAB XEM ĐIỂM - KHÓA MSSV THEO LOGIN ]=====================
 
 import time
@@ -1258,6 +1217,48 @@ def _render_xem_diem_tab():
                 st.error("Đã xảy ra lỗi không mong muốn.")
                 st.exception(e)
 # =====================[ /TAB XEM ĐIỂM ]=====================
+elif page == "Giảng viên":
+    render_banner()
+    teacher_panel()
+
+elif page == "Xem điểm":
+    render_banner()
+    render_xem_diem_page()   # <— gọi trang mới
+
+else:
+    render_banner()
+    st.title("Hướng dẫn nhanh")
+
+    st.markdown(
+        "- **Sinh viên**: đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert** hoặc **MCQ** → Bắt đầu (bắt giờ) → Nộp bài.\n"
+        "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
+        "- Kết quả ghi vào sheet: **Likert<CLASS>**, **MCQ<CLASS>** trong file Responses."
+    )
+
+
+# === Append helpers ===
+import time
+
+def _build_row_from_payload(header, payload: dict):
+    return [payload.get(col, "") for col in header]
+
+def _append_row_retry(ws, row_values, max_attempts: int = 5):
+    delay = 0.5
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            ws.append_row(row_values, value_input_option="RAW", table_range="A1")
+            return
+        except Exception as e:
+            last_err = e
+            time.sleep(min(delay, 8.0))
+            delay *= 2
+    raise last_err
+
+def _append_payload_retry(ws, header, payload: dict, max_attempts: int = 5):
+    row = _build_row_from_payload(header, payload)
+    _append_row_retry(ws, row, max_attempts=max_attempts)
+
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
