@@ -1221,7 +1221,7 @@ elif page == "Giảng viên":
     render_banner()
     teacher_panel()
 
-elif page == "Xem điểm":
+if page == "Xem điểm":
     render_banner()
     render_xem_diem_page()   # <— gọi trang mới
 
