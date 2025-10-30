@@ -429,9 +429,7 @@ def student_gate() -> bool:
         agree = st.checkbox("Tôi xác nhận thông tin trên là đúng.")
         submitted = st.form_submit_button("🔑 Đăng nhập")
 
-    # (Giữ nguyên các đoạn xử lý phía dưới của bạn)
-
-
+   
     if not submitted:
         return False
 
@@ -1076,7 +1074,7 @@ def teacher_panel():
 # SIDEBAR NAVIGATION
 # =========================
 st.sidebar.header("Chức năng")
-page = st.sidebar.radio("Đi đến", ["Sinh viên", "Giảng viên", "Hướng dẫn"], index=0)
+page = st.sidebar.radio("Đi đến", ["Sinh viên", "Giảng viên", "Xem điểm", "Hướng dẫn"], index=0)
 
 if page == "Sinh viên":
     render_banner()
@@ -1101,9 +1099,14 @@ elif page == "Giảng viên":
     render_banner()
     teacher_panel()
 
+elif page == "Xem điểm":
+    render_banner()
+    render_xem_diem_page()   # <— gọi trang mới
+
 else:
     render_banner()
     st.title("Hướng dẫn nhanh")
+
     st.markdown(
         "- **Sinh viên**: đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert** hoặc **MCQ** → Bắt đầu (bắt giờ) → Nộp bài.\n"
         "- **Giảng viên**: xem/tải ngân hàng **Likert/MCQ**, **tạo lớp**, **thống kê MCQ**, **trợ lý AI**.\n"
@@ -1133,6 +1136,128 @@ def _append_row_retry(ws, row_values, max_attempts: int = 5):
 def _append_payload_retry(ws, header, payload: dict, max_attempts: int = 5):
     row = _build_row_from_payload(header, payload)
     _append_row_retry(ws, row, max_attempts=max_attempts)
+# =====================[ TAB XEM ĐIỂM - KHÓA MSSV THEO LOGIN ]=====================
+
+import time
+import pandas as pd
+import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
+
+# Cấu hình:
+# - Đặt trong secrets:
+#   SHEET_ID = "..."; SHEET_TAB = "KQGK"; XEM_DIEM_PASSWORD = "mat-khau-tab"
+#   [gcp_service_account] ... (service account JSON)
+# - Sheet "KQGK" có header: TT | Mssv | Họ và Tên | Ngày sinh | Tổ | Điểm
+
+_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+
+@st.cache_resource(show_spinner=False)
+def _xd_get_ws():
+    """Kết nối Google Sheet (cache connection)."""
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=_SCOPES
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["SHEET_ID"])
+    ws = sh.worksheet(st.secrets.get("SHEET_TAB", "KQGK"))
+    return ws
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _xd_headers(ws):
+    return ws.row_values(1)
+
+def _xd_col_index_by_header(headers, target_names):
+    """Trả về chỉ số cột (1-based) trùng một trong các tên."""
+    lowers = [h.strip().lower() for h in headers]
+    for name in target_names:
+        nl = name.strip().lower()
+        if nl in lowers:
+            return lowers.index(nl) + 1
+    return None
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _xd_find_row_by_mssv(ws, mssv: str, headers):
+    """
+    Tìm đúng hàng theo MSSV trong cột 'Mssv'. MSSV phải đúng 9 chữ số.
+    """
+    mssv = (mssv or "").strip()
+    if not (mssv.isdigit() and len(mssv) == 9):
+        return None
+    mssv_col = _xd_col_index_by_header(headers, ["Mssv", "MSSV", "Mã số", "Mã SV"])
+    if not mssv_col:
+        return None
+    try:
+        cell = ws.find(mssv, in_column=mssv_col)
+        return cell.row if cell else None
+    except gspread.exceptions.CellNotFound:
+        return None
+
+def _xd_visible_fields(headers):
+    """
+    Chỉ hiện các cột này theo đúng thứ tự; nếu thiếu header nào sẽ tự bỏ qua.
+    """
+    order = ["Mssv", "Họ và Tên", "Ngày sinh", "Tổ", "Điểm"]
+    return [h for h in order if h in headers] or headers
+
+def _render_xem_diem_tab():
+    """Nội dung Tab 'Xem điểm' (đăng nhập trong tab + khóa MSSV theo login SV)."""
+    st.subheader("Xem điểm (Google Sheet)")
+
+    # 1) Đăng nhập bắt buộc trong tab (mật khẩu chung của tab)
+    if "xd_logged_in" not in st.session_state:
+        st.session_state["xd_logged_in"] = False
+
+    if not st.session_state["xd_logged_in"]:
+        with st.form("xd_login_form", clear_on_submit=False):
+            pwd = st.text_input("Mật khẩu Tab", type="password", help="Nhập mật khẩu do GV cung cấp")
+            ok = st.form_submit_button("Đăng nhập", use_container_width=True)
+        if ok:
+            if pwd == st.secrets.get("XEM_DIEM_PASSWORD", ""):
+                st.session_state["xd_logged_in"] = True
+                st.success("Đăng nhập Tab thành công.")
+            else:
+                st.error("Sai mật khẩu Tab.")
+        if not st.session_state["xd_logged_in"]:
+            return
+
+    # 2) Phải có phiên đăng nhập SV ở tab SV (kiểu A: SV đã login bằng MSSV + mật khẩu)
+    if not st.session_state.get("sv_logged_in"):
+        st.warning("Vui lòng đăng nhập ở tab **SV** trước (MSSV + mật khẩu).")
+        return
+
+    mssv = (st.session_state.get("sv_mssv") or "").strip()
+    if not (mssv.isdigit() and len(mssv) == 9):
+        st.error("MSSV trong phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại ở tab SV.")
+        return
+
+    # 3) Hiển thị MSSV chỉ-đọc (khóa MSSV)
+    st.text_input("MSSV của bạn", value=mssv, disabled=True)
+
+    # 4) Nút xem
+    if st.button("Xem điểm", type="primary", use_container_width=True):
+        with st.spinner("Đang truy xuất..."):
+            try:
+                ws = _xd_get_ws()
+                headers = _xd_headers(ws)
+                row_idx = _xd_find_row_by_mssv(ws, mssv, headers)
+                if not row_idx:
+                    st.error("Không tìm thấy MSSV trong danh sách.")
+                    return
+
+                values = ws.row_values(row_idx)  # đọc đúng 1 hàng
+                rec = {headers[i]: (values[i] if i < len(values) else "") for i in range(len(headers))}
+                cols = _xd_visible_fields(headers)
+                df = pd.DataFrame([{k: rec.get(k, "") for k in cols}])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.caption(f"Hàng dữ liệu: {row_idx} • Cập nhật lúc: {time.strftime('%H:%M:%S')}")
+            except gspread.exceptions.APIError as e:
+                st.error("Lỗi Google API. Vui lòng thử lại sau.")
+                st.exception(e)
+            except Exception as e:
+                st.error("Đã xảy ra lỗi không mong muốn.")
+                st.exception(e)
+# =====================[ /TAB XEM ĐIỂM ]=====================
 
 st.markdown("---")
 st.markdown("© Bản quyền thuộc về TS. Đào Hồng Nam - Đại học Y Dược Thành phố Hồ Chí Minh.")
