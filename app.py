@@ -1211,17 +1211,16 @@ def render_xem_diem_page():
                 st.exception(e)
 
 # =====================[ /TAB XEM ĐIỂM ]=====================
-elif page == "Giảng viên":
+if page == "Giảng viên":
     render_banner()
     teacher_panel()
-
-if page == "Xem điểm":
+elif page == "Xem điểm":
     render_banner()
-    render_xem_diem_page()   # <— gọi trang mới
-
+    render_xem_diem_page()
 else:
     render_banner()
     st.title("Hướng dẫn nhanh")
+
 
     st.markdown(
         "- **Sinh viên**: đăng nhập (Lớp + MSSV + Họ & Tên) → chọn **Likert** hoặc **MCQ** → Bắt đầu (bắt giờ) → Nộp bài.\n"
