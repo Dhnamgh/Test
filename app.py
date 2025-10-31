@@ -1162,38 +1162,46 @@ def _xd_visible_fields(headers):
 def render_xem_diem_page():
     st.title("Xem điểm")
 
+    # 1) Mật khẩu của tab (nếu bạn muốn bỏ, để XEM_DIEM_PASSWORD = "" trong secrets)
     if "xd_logged_in" not in st.session_state:
         st.session_state["xd_logged_in"] = False
+
     if not st.session_state["xd_logged_in"]:
         with st.form("xd_login_form", clear_on_submit=False):
             pwd = st.text_input("Mật khẩu trang Xem điểm", type="password")
             ok = st.form_submit_button("Đăng nhập")
-        # ngay trong render_xem_diem_page(), phần xử lý form đăng nhập tab:
         if ok:
             secret_pwd = str(st.secrets.get("XEM_DIEM_PASSWORD", ""))
-            if not secret_pwd:
-                st.error("Thiếu khóa XEM_DIEM_PASSWORD trong secrets.")
+            if secret_pwd.strip() == "":
+                # Không đặt mật khẩu tab → cho qua luôn
+                st.session_state["xd_logged_in"] = True
+                st.info("Trang không yêu cầu mật khẩu. Đã vào trực tiếp.")
             elif pwd.strip() == secret_pwd.strip():
                 st.session_state["xd_logged_in"] = True
                 st.success("Đăng nhập trang Xem điểm thành công.")
             else:
                 st.error("Sai mật khẩu.")
-
         if not st.session_state["xd_logged_in"]:
             return
 
-    if not st.session_state.get("sv_logged_in"):
-        st.warning("Vui lòng đăng nhập ở phần **SV** trước (MSSV + mật khẩu).")
-        return
+    # 2) Nhập MSSV ngay tại đây (9 chữ số), không cần tab SV
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        mssv = st.text_input(
+            "Nhập MSSV (9 chữ số)",
+            value=st.session_state.get("xd_last_mssv", ""),
+            max_chars=9,
+            placeholder="VD: 511256000",
+        )
+    with col2:
+        xem = st.button("Xem điểm", type="primary", use_container_width=True)
 
-    mssv = (st.session_state.get("sv_mssv") or "").strip()
-    if not (mssv.isdigit() and len(mssv) == 9):
-        st.error("MSSV trong phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại ở phần SV.")
-        return
+    if xem:
+        mssv = (mssv or "").strip()
+        if not (mssv.isdigit() and len(mssv) == 9):
+            st.warning("MSSV phải gồm đúng 9 chữ số.")
+            return
 
-    st.text_input("MSSV của bạn", value=mssv, disabled=True)
-
-    if st.button("Xem điểm", type="primary"):
         with st.spinner("Đang truy xuất..."):
             try:
                 ws = _xd_get_ws()
@@ -1202,18 +1210,23 @@ def render_xem_diem_page():
                 if not row_idx:
                     st.error("Không tìm thấy MSSV trong danh sách.")
                     return
-                values = ws.row_values(row_idx)
+
+                values = ws.row_values(row_idx)  # đọc đúng 1 hàng
                 rec = {headers[i]: (values[i] if i < len(values) else "") for i in range(len(headers))}
                 cols = _xd_visible_fields(headers)
                 df = pd.DataFrame([{k: rec.get(k, "") for k in cols}])
+
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 st.caption(f"Hàng dữ liệu: {row_idx} • Cập nhật: {time.strftime('%H:%M:%S')}")
+                st.session_state["xd_last_mssv"] = mssv  # nhớ lại lần sau
+
             except gspread.exceptions.APIError as e:
                 st.error("Lỗi Google API. Vui lòng thử lại sau.")
                 st.exception(e)
             except Exception as e:
                 st.error("Đã xảy ra lỗi không mong muốn.")
                 st.exception(e)
+
 
 # =====================[ /TAB XEM ĐIỂM ]=====================
 if page == "Giảng viên":
