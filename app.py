@@ -1225,7 +1225,7 @@ def render_xem_diem_page():
     # 2) MSSV: nếu đã khóa trong phiên thì chỉ hiển thị read-only, không cho đổi
     locked = st.session_state.get("xd_locked_mssv")
     if locked:
-        st.text_input("MSSV của bạn (đã khóa cho phiên này)", value=locked, disabled=True)
+        st.text_input("MSSV của bạn (không xem được của SV khác để bảo mật thông tin cá nhân)", value=locked, disabled=True)
         mssv = locked
     else:
         col1, col2 = st.columns([3, 1])
