@@ -1169,11 +1169,24 @@ def _xd_col_letter(n: int) -> str:
         s = chr(65 + r) + s
     return s
 
+from datetime import datetime, timedelta
+
 def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
     """
     Đọc đúng 'ncols' cột của hàng 'row_idx' bằng A1 range,
-    giữ ô trống ở giữa (không cắt đuôi) và lấy UNFORMATTED_VALUE.
+    giữ ô trống ở giữa (không cắt đuôi) và chuyển serial date -> dd/mm/yyyy.
     """
+    def excel_date_to_str(val):
+        # Nếu là số và nằm trong khoảng ngày hợp lý, chuyển sang dd/mm/yyyy
+        if isinstance(val, (int, float)) and 20000 < val < 60000:
+            base = datetime(1899, 12, 30)  # Excel epoch
+            try:
+                d = base + timedelta(days=float(val))
+                return d.strftime("%d/%m/%Y")
+            except Exception:
+                return val
+        return val
+
     end_col = _xd_col_letter(ncols)
     rng = f"A{row_idx}:{end_col}{row_idx}"
     rows = _ws.get(rng, value_render_option="UNFORMATTED_VALUE")
@@ -1182,8 +1195,11 @@ def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
         # pad nếu API trả thiếu
         if len(row) < ncols:
             row += [""] * (ncols - len(row))
+        # Chuyển serial date -> dd/mm/yyyy
+        row = [excel_date_to_str(v) for v in row]
         return row[:ncols]
     return [""] * ncols
+
 
 # ---- trang Xem điểm: KHÔNG phụ thuộc tab SV; khóa MSSV sau lần xem đầu; không có nút đổi ----
 def render_xem_diem_page():
