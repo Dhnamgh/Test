@@ -1123,8 +1123,8 @@ def _xd_get_ws():
     return ws
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _xd_headers(ws):
-    return ws.row_values(1)
+def _xd_headers(_ws):
+    return _ws.row_values(1)
 
 def _xd_col_index_by_header(headers, target_names):
     """Trả về chỉ số cột (1-based) trùng một trong các tên."""
@@ -1136,18 +1136,19 @@ def _xd_col_index_by_header(headers, target_names):
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _xd_find_row_by_mssv(ws, mssv: str, headers):
+def _xd_find_row_by_mssv(_ws, mssv: str, headers):
     """
     Tìm đúng hàng theo MSSV trong cột 'Mssv'. MSSV phải đúng 9 chữ số.
     """
     mssv = (mssv or "").strip()
     if not (mssv.isdigit() and len(mssv) == 9):
         return None
+    # xác định cột 'Mssv'
     mssv_col = _xd_col_index_by_header(headers, ["Mssv", "MSSV", "Mã số", "Mã SV"])
     if not mssv_col:
         return None
     try:
-        cell = ws.find(mssv, in_column=mssv_col)
+        cell = _ws.find(mssv, in_column=mssv_col)
         return cell.row if cell else None
     except gspread.exceptions.CellNotFound:
         return None
