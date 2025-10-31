@@ -1168,12 +1168,17 @@ def render_xem_diem_page():
         with st.form("xd_login_form", clear_on_submit=False):
             pwd = st.text_input("Mật khẩu trang Xem điểm", type="password")
             ok = st.form_submit_button("Đăng nhập")
+        # ngay trong render_xem_diem_page(), phần xử lý form đăng nhập tab:
         if ok:
-            if pwd == st.secrets.get("XEM_DIEM_PASSWORD", ""):
+            secret_pwd = str(st.secrets.get("XEM_DIEM_PASSWORD", ""))
+            if not secret_pwd:
+                st.error("Thiếu khóa XEM_DIEM_PASSWORD trong secrets.")
+            elif pwd.strip() == secret_pwd.strip():
                 st.session_state["xd_logged_in"] = True
                 st.success("Đăng nhập trang Xem điểm thành công.")
             else:
                 st.error("Sai mật khẩu.")
+
         if not st.session_state["xd_logged_in"]:
             return
 
