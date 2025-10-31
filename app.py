@@ -1163,21 +1163,16 @@ def _xd_visible_fields(headers):
 def render_xem_diem_page():
     st.title("Xem điểm")
 
-    # 1) Mật khẩu của tab (nếu bạn muốn bỏ, để XEM_DIEM_PASSWORD = "" trong secrets)
+    # 1) Đăng nhập tab (mật khẩu trong secrets). Cho phép bỏ mật khẩu nếu để rỗng.
     if "xd_logged_in" not in st.session_state:
         st.session_state["xd_logged_in"] = False
-
     if not st.session_state["xd_logged_in"]:
         with st.form("xd_login_form", clear_on_submit=False):
             pwd = st.text_input("Mật khẩu trang Xem điểm", type="password")
             ok = st.form_submit_button("Đăng nhập")
         if ok:
             secret_pwd = str(st.secrets.get("XEM_DIEM_PASSWORD", ""))
-            if secret_pwd.strip() == "":
-                # Không đặt mật khẩu tab → cho qua luôn
-                st.session_state["xd_logged_in"] = True
-                st.info("Trang không yêu cầu mật khẩu. Đã vào trực tiếp.")
-            elif pwd.strip() == secret_pwd.strip():
+            if secret_pwd.strip() == "" or pwd.strip() == secret_pwd.strip():
                 st.session_state["xd_logged_in"] = True
                 st.success("Đăng nhập trang Xem điểm thành công.")
             else:
@@ -1185,22 +1180,43 @@ def render_xem_diem_page():
         if not st.session_state["xd_logged_in"]:
             return
 
-    # 2) Nhập MSSV ngay tại đây (9 chữ số), không cần tab SV
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        mssv = st.text_input(
-            "Nhập MSSV (9 chữ số)",
-            value=st.session_state.get("xd_last_mssv", ""),
-            max_chars=9,
-            placeholder="VD: 511256000",
-        )
-    with col2:
+    # 2) Nếu đã khóa MSSV thì chỉ cho xem đúng MSSV đó; có nút để đổi (reset khóa)
+    locked = st.session_state.get("xd_locked_mssv")
+
+    colL, colR = st.columns([3, 1])
+    with colL:
+        if locked:
+            # Đã khóa -> hiển thị MSSV chỉ-đọc
+            st.text_input("MSSV (đã khóa cho phiên này)", value=locked, disabled=True)
+            mssv = locked
+        else:
+            mssv = st.text_input(
+                "Nhập MSSV (9 chữ số)",
+                value=st.session_state.get("xd_last_mssv", ""),
+                max_chars=9,
+                placeholder="VD: 511256000",
+            )
+    with colR:
         xem = st.button("Xem điểm", type="primary", use_container_width=True)
+
+    # Nút đổi MSSV (xóa khóa và yêu cầu đăng nhập lại nếu muốn chặt chẽ)
+    cols = st.columns([1,1,2])
+    with cols[0]:
+        if st.button("Đổi MSSV (đăng xuất tab)"):
+            st.session_state.pop("xd_locked_mssv", None)
+            st.session_state["xd_logged_in"] = False
+            st.info("Đã xóa khóa MSSV. Vui lòng đăng nhập lại và nhập MSSV mới.")
+            st.stop()
 
     if xem:
         mssv = (mssv or "").strip()
         if not (mssv.isdigit() and len(mssv) == 9):
             st.warning("MSSV phải gồm đúng 9 chữ số.")
+            return
+
+        # Nếu đã khóa mà người dùng cố nhập khác (trường hợp họ sửa DOM), chặn server-side
+        if locked and mssv != locked:
+            st.error("MSSV đã bị khóa cho phiên này. Bấm 'Đổi MSSV' nếu bạn muốn xem MSSV khác.")
             return
 
         with st.spinner("Đang truy xuất..."):
@@ -1219,7 +1235,12 @@ def render_xem_diem_page():
 
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 st.caption(f"Hàng dữ liệu: {row_idx} • Cập nhật: {time.strftime('%H:%M:%S')}")
-                st.session_state["xd_last_mssv"] = mssv  # nhớ lại lần sau
+
+                # Khóa MSSV sau lần xem đầu tiên
+                if not locked:
+                    st.session_state["xd_locked_mssv"] = mssv
+                # Nhớ MSSV gần nhất để prefill lần sau
+                st.session_state["xd_last_mssv"] = mssv
 
             except gspread.exceptions.APIError as e:
                 st.error("Lỗi Google API. Vui lòng thử lại sau.")
