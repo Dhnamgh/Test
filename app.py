@@ -1244,6 +1244,7 @@ def _force_ddmmyyyy(val):
 
     return val
 
+
 # ---- trang Xem điểm: KHÔNG phụ thuộc tab SV; khóa MSSV sau lần xem đầu; không có nút đổi ----
 def render_xem_diem_page():
     st.title("Xem điểm")
