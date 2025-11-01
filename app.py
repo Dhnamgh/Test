@@ -1200,10 +1200,60 @@ def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
         return row[:ncols]
     return [""] * ncols
 
+import re
+from datetime import datetime, timedelta
+
+_ddmmyyyy_re = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$")
+
+def _force_ddmmyyyy(val):
+    """Chuẩn hóa mọi kiểu ngày về dd/mm/YYYY:
+    - Serial Excel/Sheets (20000..60000) -> dd/mm/YYYY
+    - Chuỗi d/m/YYYY hoặc m/d/YYYY -> ép coi vế đầu là ngày
+    - ISO yyyy-mm-dd / yyyy/mm/dd -> dd/mm/YYYY
+    - Ngược lại: trả nguyên.
+    """
+    # Serial
+    if isinstance(val, (int, float)):
+        f = float(val)
+        if 20000 < f < 60000:
+            base = datetime(1899, 12, 30)
+            try:
+                d = base + timedelta(days=f)
+                return d.strftime("%d/%m/%Y")
+            except Exception:
+                return val
+
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return s
+        s_std = s.replace(".", "/").replace("-", "/")
+
+        # dd/mm/yyyy HOẶC mm/dd/yyyy -> luôn coi nhóm 1 là ngày
+        m = _ddmmyyyy_re.match(s_std)
+        if m:
+            d, M, y = m.groups()
+            return f"{int(d):02d}/{int(M):02d}/{y}"
+
+        # yyyy/mm/dd
+        try:
+            d = datetime.strptime(s_std, "%Y/%m/%d")
+            return d.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+
+    return val
 
 # ---- trang Xem điểm: KHÔNG phụ thuộc tab SV; khóa MSSV sau lần xem đầu; không có nút đổi ----
 def render_xem_diem_page():
     st.title("Xem điểm")
+# Nút xóa cache 
+c1, c2 = st.columns([1, 5])
+with c1:
+    if st.button("Làm mới cache"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
 
     # 1) Mật khẩu tab (đặt rỗng trong secrets nếu muốn bỏ bước này)
     if "xd_logged_in" not in st.session_state:
@@ -1260,6 +1310,10 @@ def render_xem_diem_page():
 
             values = _xd_read_row_strict(ws, row_idx, len(headers))  # <-- thay vì row_values()
             rec = {headers[i]: (values[i] if i < len(values) else "") for i in range(len(headers))}
+            # Ép cột ngày về dd/mm/YYYY – thay tên cho đúng header của bạn
+            for key in headers:
+                if key.strip().lower() in {"ngày sinh", "ngay sinh"}:
+                    rec[key] = _force_ddmmyyyy(rec.get(key, ""))
 
             # Cột hiển thị (giữ như bạn đã cấu hình)
             cols = _xd_visible_fields(headers)
