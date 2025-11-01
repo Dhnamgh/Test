@@ -1223,6 +1223,39 @@ def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
 
     return [""] * ncols
 
+import re
+from datetime import datetime, timedelta
+
+_ddmmyyyy_re = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$")
+
+def _force_ddmmyyyy(val):
+    """Trả về chuỗi dd/mm/YYYY, coi chuỗi d/m/YYYY là ngày/tháng, xử lý luôn serial và ISO."""
+    # Serial Excel
+    if isinstance(val, (int, float)) and 20000 < float(val) < 60000:
+        base = datetime(1899, 12, 30)
+        try:
+            d = base + timedelta(days=float(val))
+            return d.strftime("%d/%m/%Y")
+        except Exception:
+            return val
+    # Chuỗi dd/mm/yyyy hoặc mm/dd/yyyy -> ép theo dd/mm
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return s
+        s_std = s.replace(".", "/").replace("-", "/")
+        m = _ddmmyyyy_re.match(s_std)
+        if m:
+            d, M, y = m.groups()
+            # Luôn coi vế đầu là day, vế hai là month
+            return f"{int(d):02d}/{int(M):02d}/{y}"
+        # ISO hoặc yyyy/mm/dd
+        try:
+            d = datetime.strptime(s_std, "%Y/%m/%d")
+            return d.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+    return val
 
 
 # ---- trang Xem điểm: KHÔNG phụ thuộc tab SV; khóa MSSV sau lần xem đầu; không có nút đổi ----
@@ -1284,6 +1317,9 @@ def render_xem_diem_page():
 
             values = _xd_read_row_strict(ws, row_idx, len(headers))  # <-- thay vì row_values()
             rec = {headers[i]: (values[i] if i < len(values) else "") for i in range(len(headers))}
+            # Ép riêng cột "Ngày sinh" về dd/mm/YYYY, không phụ thuộc locale
+            if "Ngày sinh" in rec:
+                rec["Ngày sinh"] = _force_ddmmyyyy(rec["Ngày sinh"])
 
             # Cột hiển thị (giữ như bạn đã cấu hình)
             cols = _xd_visible_fields(headers)
