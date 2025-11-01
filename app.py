@@ -1174,10 +1174,10 @@ from datetime import datetime, timedelta
 def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
     """
     Đọc đúng 'ncols' cột của hàng 'row_idx' bằng A1 range,
-    giữ ô trống ở giữa (không cắt đuôi) và chuyển serial date -> dd/mm/yyyy.
+    giữ ô trống ở giữa (không cắt đuôi) và chuẩn hóa ngày về dd/mm/YYYY.
     """
-    def excel_date_to_str(val):
-        # Nếu là số và nằm trong khoảng ngày hợp lý, chuyển sang dd/mm/yyyy
+    def normalize_date(val):
+        # 1) Excel/Sheets serial date -> dd/mm/YYYY
         if isinstance(val, (int, float)) and 20000 < val < 60000:
             base = datetime(1899, 12, 30)  # Excel epoch
             try:
@@ -1185,20 +1185,44 @@ def _xd_read_row_strict(_ws, row_idx: int, ncols: int):
                 return d.strftime("%d/%m/%Y")
             except Exception:
                 return val
+
+        # 2) Chuỗi ngày phổ biến -> dd/mm/YYYY
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return val
+            # Chuẩn hóa phân tách để dễ parse
+            s_std = s.replace(".", "/").replace("-", "/")
+            for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
+                try:
+                    d = datetime.strptime(s_std, fmt)
+                    return d.strftime("%d/%m/%Y")
+                except Exception:
+                    pass
         return val
 
-    end_col = _xd_col_letter(ncols)
+    # Đọc bằng A1 range để giữ số cột & ô trống
+    def _col_letter(n: int) -> str:
+        s = ""
+        while n > 0:
+            n, r = divmod(n - 1, 26)
+            s = chr(65 + r) + s
+        return s
+
+    end_col = _col_letter(ncols)
     rng = f"A{row_idx}:{end_col}{row_idx}"
     rows = _ws.get(rng, value_render_option="UNFORMATTED_VALUE")
+
     if rows and len(rows) > 0:
         row = rows[0]
-        # pad nếu API trả thiếu
         if len(row) < ncols:
             row += [""] * (ncols - len(row))
-        # Chuyển serial date -> dd/mm/yyyy
-        row = [excel_date_to_str(v) for v in row]
+        # Chuẩn hóa từng ô (đặc biệt là ngày)
+        row = [normalize_date(v) for v in row]
         return row[:ncols]
+
     return [""] * ncols
+
 
 
 # ---- trang Xem điểm: KHÔNG phụ thuộc tab SV; khóa MSSV sau lần xem đầu; không có nút đổi ----
