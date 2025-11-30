@@ -1105,9 +1105,9 @@ from google.oauth2.service_account import Credentials
 
 # Cấu hình:
 # - Đặt trong secrets:
-#   SHEET_ID = "..."; SHEET_TAB = "KQGK"; XEM_DIEM_PASSWORD = "mat-khau-tab"
+#   SHEET_ID = "..."; SHEET_TAB = "KQ"; XEM_DIEM_PASSWORD = "mat-khau-tab"
 #   [gcp_service_account] ... (service account JSON)
-# - Sheet "KQGK" có header: TT | Mssv | Họ và Tên | Ngày sinh | Tổ | Điểm
+# - Sheet "KQ" có header: TT | Mssv | Họ và Tên | Ngày sinh | Tổ | Điểm
 
 _SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
@@ -1119,7 +1119,7 @@ def _xd_get_ws():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(st.secrets["SHEET_ID"])
-    ws = sh.worksheet(st.secrets.get("SHEET_TAB", "KQGK"))
+    ws = sh.worksheet(st.secrets.get("SHEET_TAB", "KQ"))
     return ws
 
 @st.cache_data(ttl=120, show_spinner=False)
