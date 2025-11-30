@@ -1157,7 +1157,7 @@ def _xd_visible_fields(headers):
     """
     Chỉ hiện các cột này theo đúng thứ tự; nếu thiếu header nào sẽ tự bỏ qua.
     """
-    order = ["Mssv", "Họ và Tên", "Ngày sinh", "Tổ", “Điểm GK”,	“Điểm CK”,	“Điểm TK”]
+    order = ["Mssv", "Họ và Tên", "Ngày sinh", "Tổ", "Điểm GK",	"Điểm CK",	"Điểm TK"]
     return [h for h in order if h in headers] or headers
 
 # ---- helper: đọc 1 hàng theo A1, giữ đúng số cột & ô trống, lấy giá trị thô ----
